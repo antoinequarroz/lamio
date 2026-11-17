@@ -136,6 +136,38 @@ Ensuite, dans Lamio, « Modules » ouvre Cairn et Metricove sans mot de passe. L
 
 À savoir : Cairn et Metricove n'ont qu'un seul espace. Une personne à qui tu ouvres Cairn voit donc toutes tes notes (le coffre reste fermé par son mot de passe maître).
 
+## Brancher Lamio sur le Compte Postmelo
+
+Le Compte Postmelo (dépôt `postmelo-compte`, en ligne sur `https://compte.postmelo.ch`) est le compte unique de la suite.
+Une fois branché, la page de connexion de Lamio propose « Continuer avec mon Compte Postmelo ». Le mot de passe Lamio reste là en secours.
+
+Un secret, créé sur le VPS avec `openssl rand -base64 32`, à mettre des deux côtés.
+
+Dans `~/compte/.env` :
+
+```env
+LAMIO_URL=https://lamio.postmelo.ch
+LAMIO_CLIENT_SECRET=<le secret>
+```
+
+Dans `~/lamio/.env` :
+
+```env
+COMPTE_URL=https://compte.postmelo.ch
+COMPTE_CLIENT_SECRET=<le même secret>
+APP_URL=https://lamio.postmelo.ch
+```
+
+Relance les deux, le compte d'abord (`docker compose up -d` dans `~/compte/deploy`, puis `docker compose up -d --build` dans `~/lamio/deploy`).
+
+À savoir :
+
+- La personne est retrouvée par son identifiant (les comptes repris de Lamio ont gardé le leur), sinon par son e-mail. Une personne inconnue de Lamio y est créée à sa première connexion, sans mot de passe Lamio.
+- Le nom et le rôle (admin ou membre) suivent ceux du Compte Postmelo à chaque connexion.
+- « Se déconnecter » ferme aussi la session du Compte Postmelo.
+- Retour en arrière : vide les trois lignes de `~/lamio/.env` et relance Lamio. Tout redevient comme avant.
+- L'app Mac doit être reconstruite une fois (`desktop/`), pour que la connexion par le Compte Postmelo reste dans sa fenêtre. En attendant, le mot de passe Lamio y fonctionne toujours.
+
 ## 6. Sauvegardes
 
 ```bash

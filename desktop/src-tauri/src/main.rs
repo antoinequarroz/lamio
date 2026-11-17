@@ -17,6 +17,18 @@ fn home() -> Url {
         .unwrap_or_else(|| DEFAULT_URL.parse().expect("adresse par défaut valide"))
 }
 
+/// The Compte Postmelo, where the sign-in happens: it stays in the window, so the session lands in the app.
+/// Pour un autre service de compte : COMPTE_URL=https://… npm run build
+const DEFAULT_ACCOUNT_URL: &str = "https://compte.postmelo.ch";
+
+fn account_host() -> Option<String> {
+    option_env!("COMPTE_URL")
+        .unwrap_or(DEFAULT_ACCOUNT_URL)
+        .parse::<Url>()
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+}
+
 fn open_in_browser(url: &Url) {
     if matches!(url.scheme(), "http" | "https" | "mailto") {
         let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
@@ -29,6 +41,7 @@ fn main() {
         .setup(|app| {
             let home = home();
             let host = home.host_str().map(str::to_owned);
+            let account = account_host();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Lamio")
                 // Tells the waiting page which server to reach.
@@ -40,10 +53,11 @@ fn main() {
                     open_in_browser(&url);
                     NewWindowResponse::Deny
                 })
-                // The window itself never leaves Lamio.
+                // The window itself never leaves Lamio, except to sign in with the Compte Postmelo.
                 .on_navigation(move |url| {
                     // The waiting page is served by the app itself (tauri://localhost).
-                    let inside = matches!(url.scheme(), "about" | "tauri") || url.host_str().map(str::to_owned) == host;
+                    let target = url.host_str().map(str::to_owned);
+                    let inside = matches!(url.scheme(), "about" | "tauri") || target == host || (target.is_some() && target == account);
                     if !inside {
                         open_in_browser(url);
                     }
