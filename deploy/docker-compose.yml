@@ -1,13 +1,17 @@
-# Lamio sur le VPS, à côté de Cairn et Metricove.
+# Lamio sur le VPS, à côté de Cairn et Metricove (voir docs/DEPLOIEMENT.md).
 #
-# Le Caddy déjà en place (celui de Metricove) occupe les ports 80 et 443 : Lamio passe par lui
-# (voir docs/DEPLOIEMENT.md, étape 3).
+# Le Caddy déjà en place (conteneur antoinequarroz-caddy) occupe les ports 80 et 443. Lamio ne
+# publie aucun port : il rejoint le réseau Docker de ce Caddy, qui le joint par son nom (lamio:3000).
 #
 #   cd deploy && docker compose up -d --build
+
+# Sans ce nom, le projet s'appellerait « deploy », comme celui de Cairn.
+name: lamio
 
 services:
   app:
     build: ..
+    container_name: lamio
     restart: unless-stopped
     env_file: ../.env
     environment:
@@ -15,8 +19,16 @@ services:
       TZ: Europe/Zurich
     volumes:
       - app-data:/data
-    ports:
-      - "${APP_BIND:-172.17.0.1}:${APP_PORT:-3030}:3000"
+    networks:
+      default:
+      proxy:
+        aliases: [lamio]
 
 volumes:
   app-data:
+
+networks:
+  # Le réseau du Caddy en place. Sur un autre serveur : PROXY_NETWORK=<son réseau> dans deploy/.env.
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-antoinequarroz-vitrine_appnet}
