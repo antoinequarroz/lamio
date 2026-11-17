@@ -100,6 +100,24 @@ body {
   color: var(--ink);
 }
 
+/* iPhone: the background runs edge to edge, the content stays clear of the notch and the home bar.
+   Everywhere else these insets are 0. */
+:root {
+  --safe-y: calc(env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+}
+
+body {
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+.h-dvh {
+  height: calc(100dvh - var(--safe-y));
+}
+
+.min-h-dvh {
+  min-height: calc(100dvh - var(--safe-y));
+}
+
 body {
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;

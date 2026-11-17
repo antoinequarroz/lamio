@@ -16,6 +16,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // The page paints under the iPhone's notch and home bar; globals.css keeps the content out of them.
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#efede8" },
     { media: "(prefers-color-scheme: dark)", color: "#0f0f0e" },
