@@ -110,6 +110,33 @@ export function db() {
       user_id text not null references users (id) on delete cascade,
       primary key (module, user_id)
     );
+    -- Module Projets. A project is open to every account, and may have its channel in the messaging.
+    create table if not exists projects (
+      id text primary key,
+      name text not null,
+      description text not null default '',
+      conversation_id text references conversations (id) on delete set null,
+      archived integer not null default 0,
+      created_by text references users (id) on delete set null,
+      created_at text not null
+    );
+    create table if not exists tasks (
+      id text primary key,
+      project_id text not null references projects (id) on delete cascade,
+      title text not null,
+      description text not null default '',
+      status text not null default 'todo' check (status in ('todo', 'doing', 'done')),
+      -- A day, "YYYY-MM-DD": a deadline has no hour and no time zone.
+      due_date text,
+      assignee_id text references users (id) on delete set null,
+      -- Order inside a column of the board. A task dropped between two others takes the middle.
+      position real not null default 0,
+      created_by text references users (id) on delete set null,
+      created_at text not null,
+      done_at text
+    );
+    create index if not exists tasks_project on tasks (project_id, position);
+    create index if not exists tasks_assignee on tasks (assignee_id) where status != 'done';
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {
@@ -125,7 +152,7 @@ export function db() {
 }
 
 export const newId = () => crypto.randomBytes(9).toString("base64url");
-const now = () => new Date().toISOString();
+export const now = () => new Date().toISOString();
 
 // ---- Users
 

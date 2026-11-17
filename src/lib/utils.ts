@@ -33,6 +33,39 @@ export function dayLabel(iso: string) {
   return d.toLocaleDateString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
 }
 
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** A day as "YYYY-MM-DD", in the local time of the device: how deadlines are stored. */
+export function dayKey(d = new Date()) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+const fromKey = (key: string) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+
+export type DueGroup = "late" | "today" | "week" | "later" | "none";
+
+/** Where a deadline falls, seen from today. The week ends on Sunday. */
+export function dueGroup(due: string | null, today = dayKey()): DueGroup {
+  if (!due) return "none";
+  if (due < today) return "late";
+  if (due === today) return "today";
+  const sunday = fromKey(today);
+  sunday.setDate(sunday.getDate() + ((7 - sunday.getDay()) % 7));
+  return due <= dayKey(sunday) ? "week" : "later";
+}
+
+/** "Aujourd'hui", "Demain", "Hier", or "12 mars". */
+export function dueLabel(due: string, today = dayKey()) {
+  const days = Math.round((fromKey(due).getTime() - fromKey(today).getTime()) / 86_400_000);
+  if (days === 0) return "Aujourd'hui";
+  if (days === 1) return "Demain";
+  if (days === -1) return "Hier";
+  return fromKey(due).toLocaleDateString("fr-CH", { day: "numeric", month: "short", year: due.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
+}
+
 export function fileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} o`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;

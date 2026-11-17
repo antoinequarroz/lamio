@@ -38,7 +38,7 @@ pnpm dev
 Puis ouvrir http://localhost:3000 et créer le premier compte.
 
 ```bash
-pnpm test    # comptes, conversations, messages, fichiers, modules
+pnpm test    # comptes, conversations, messages, fichiers, modules, projets
 pnpm lint
 pnpm build
 ```
@@ -58,11 +58,19 @@ Copier `.env.example` en `.env.local` (en local) ou `.env` (sur le VPS). Rien n'
 
 Tout est dans [`src/modules/registry.ts`](src/modules/registry.ts) : une entrée par outil. Trois états, comme dans la feuille de route :
 
-1. **Actif** : fait partie de cette app (la messagerie).
+1. **Actif** : fait partie de cette app (la messagerie, les projets).
 2. **Branché** : l'outil tourne à son adresse, elle l'ouvre. Il suffit de donner son adresse dans `.env`.
 3. **Bientôt** : prévu, pas encore branché.
 
 L'étape suivante (des échanges de données entre les outils) partira de ce fichier.
+
+### Projets
+
+Le premier module construit dans Lamio même, à l'adresse `/p`. Un projet regroupe des tâches (statut, échéance, description, personne), en liste ou en tableau par colonnes, où les cartes se glissent d'une colonne à l'autre. Chaque projet peut avoir son canal dans la messagerie. « Mes tâches » (`/p/taches`) réunit ce qui t'est attribué, tous projets confondus : en retard, aujourd'hui, cette semaine, plus tard. Les projets et les tâches se trouvent aussi avec ⌘K.
+
+Tous les comptes voient tous les projets. Seul son créateur, ou un administrateur, peut en supprimer un.
+
+Un module intégré garde le design de la suite et apporte sa couleur : celle de Projets (bleu canard) est définie une seule fois, sous `.module-projets` dans [`src/app/globals.css`](src/app/globals.css). Le code est dans `src/server/projects.ts`, `src/app/api/projects`, `src/app/api/tasks` et `src/components/project-view.tsx`.
 
 ### Une seule connexion
 

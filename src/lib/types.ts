@@ -67,11 +67,49 @@ export type ModuleInfo = {
   allowedIds?: string[];
 };
 
-export type AppState = { me: User; users: User[]; conversations: Conversation[]; modules: ModuleInfo[] };
+export type TaskStatus = "todo" | "doing" | "done";
+
+export type Project = {
+  id: string;
+  name: string;
+  description: string;
+  /** Its channel in the messaging, when it has one. */
+  conversationId: string | null;
+  archived: boolean;
+  createdBy: string | null;
+  createdAt: string;
+  taskCount: number;
+  doneCount: number;
+  /** The closest deadline among the tasks still to do ("YYYY-MM-DD"). */
+  nextDue: string | null;
+};
+
+export type Task = {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  /** A day, "YYYY-MM-DD". */
+  dueDate: string | null;
+  assigneeId: string | null;
+  /** Order inside its column. */
+  position: number;
+  createdBy: string | null;
+  createdAt: string;
+  doneAt: string | null;
+};
+
+/** A task outside its project page: in "Mes tâches" and in the search. */
+export type TaskWithProject = Task & { projectName: string };
+
+export type AppState = { me: User; users: User[]; conversations: Conversation[]; modules: ModuleInfo[]; projects: Project[] };
 
 /** What the server pushes over /api/events. */
 export type ServerEvent =
   | { type: "message"; message: Message }
   | { type: "message-updated"; message: Message }
   | { type: "message-deleted"; conversationId: string; id: number; parentId: number | null }
+  /** Something changed in this project or its tasks. */
+  | { type: "project"; projectId: string }
   | { type: "refresh" };

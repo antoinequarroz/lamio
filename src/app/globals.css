@@ -72,6 +72,28 @@
   color-scheme: dark;
 }
 
+/* A module built into this app keeps the look of the suite and brings its own accent.
+   Projets: teal. To change it, these three blocks are the only place. */
+.module-projets {
+  --accent: #0c8a8f;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(12, 138, 143, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .module-projets {
+    --accent: #4fd0d4;
+    --accent-ink: #04282a;
+    --accent-soft: rgba(79, 208, 212, 0.16);
+  }
+}
+
+:root[data-theme="dark"] .module-projets {
+  --accent: #4fd0d4;
+  --accent-ink: #04282a;
+  --accent-soft: rgba(79, 208, 212, 0.16);
+}
+
 @theme inline {
   --color-bg: var(--bg);
   --color-bg-2: var(--bg-2);
