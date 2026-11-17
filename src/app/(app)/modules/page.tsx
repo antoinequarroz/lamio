@@ -18,7 +18,7 @@ export default function ModulesPage() {
   const { modules } = useApp();
   return (
     <>
-      <PageHeader title="Modules" subtitle="Ici, c'est la base. Les autres outils de la suite viennent s'y brancher un par un." />
+      <PageHeader title="Modules" subtitle="Lamio est la base. Les autres outils de la suite viennent s'y brancher un par un." />
       <div className="scroll-thin flex-1 overflow-y-auto p-7 max-md:p-4">
         <div className="mx-auto grid max-w-[860px] gap-3 sm:grid-cols-2">
           {modules.map((m, i) => {

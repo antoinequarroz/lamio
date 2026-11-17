@@ -1,9 +1,9 @@
-# La base de la suite sur le VPS, à côté de Cairn et Metricove.
+# Lamio sur le VPS, à côté de Cairn et Metricove.
 #
 # Le Caddy déjà en place (celui de Metricove) occupe les ports 80 et 443 : elle passe par lui.
 # Ajoute ce bloc à son Caddyfile, puis recharge-le :
 #
-#   base.antoinequarroz.ch {
+#   lamio.antoinequarroz.ch {
 #       encode zstd gzip
 #       header Strict-Transport-Security "max-age=31536000"
 #       request_body {

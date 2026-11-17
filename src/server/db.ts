@@ -3,7 +3,8 @@ import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { Conversation, FileInfo, Message, Role, User } from "@/lib/types";
+import { mentionedIds } from "@/lib/mentions";
+import type { Conversation, FileInfo, Message, Role, SearchHit, User } from "@/lib/types";
 
 export const dataDir = () => path.resolve(process.env.DATA_DIR ?? "./data");
 export const filesDir = () => path.join(dataDir(), "files");
@@ -64,6 +65,13 @@ export function db() {
       parent_id integer references messages (id) on delete cascade
     );
     create index if not exists messages_conversation on messages (conversation_id, id);
+    -- Who a message mentions, worked out from its text when it is posted or edited.
+    create table if not exists mentions (
+      message_id integer not null references messages (id) on delete cascade,
+      user_id text not null references users (id) on delete cascade,
+      primary key (message_id, user_id)
+    );
+    create index if not exists mentions_user on mentions (user_id, message_id);
     create table if not exists reactions (
       message_id integer not null references messages (id) on delete cascade,
       user_id text not null references users (id) on delete cascade,
@@ -181,7 +189,7 @@ export const removeSession = (tokenHash: string) => db().prepare("delete from se
 
 // ---- Conversations
 
-type ConversationRow = { id: string; kind: "channel" | "dm"; name: string; topic: string; dm_key: string | null; private: number };
+type ConversationRow = { id: string; kind: "channel" | "dm"; name: string; topic: string; dm_key: string | null; private: number; created_by: string | null };
 
 const dmKey = (a: string, b: string) => [a, b].sort().join(":");
 const otherOf = (key: string, me: string) => {
@@ -194,18 +202,21 @@ const VISIBLE = "((c.kind = 'channel' and c.private = 0) or exists (select 1 fro
 
 export const listMembers = (conversationId: string) => (db().prepare("select user_id from members where conversation_id = ?").all(conversationId) as { user_id: string }[]).map((r) => r.user_id);
 
-export function listConversations(userId: string): Conversation[] {
+/** The conversations of this person. `role` decides what they may manage (admins: every channel). */
+export function listConversations(userId: string, role: Role = "member"): Conversation[] {
+  const READ = "coalesce((select last_message_id from reads r where r.user_id = @me and r.conversation_id = c.id), 0)";
   const rows = db()
     .prepare(
-      `select c.id, c.kind, c.name, c.topic, c.dm_key, c.private,
+      `select c.id, c.kind, c.name, c.topic, c.dm_key, c.private, c.created_by,
         coalesce((select max(id) from messages m where m.conversation_id = c.id), 0) as last_message_id,
-        (select count(*) from messages m where m.conversation_id = c.id and m.user_id != @me
-          and m.id > coalesce((select last_message_id from reads r where r.user_id = @me and r.conversation_id = c.id), 0)) as unread
+        (select count(*) from messages m where m.conversation_id = c.id and m.user_id != @me and m.id > ${READ}) as unread,
+        (select count(*) from mentions x join messages m on m.id = x.message_id
+          where x.user_id = @me and m.conversation_id = c.id and m.user_id != @me and m.id > ${READ}) as mentions
        from conversations c
        where ${VISIBLE}
        order by c.kind, c.name collate nocase, c.created_at`,
     )
-    .all({ me: userId }) as (ConversationRow & { last_message_id: number; unread: number })[];
+    .all({ me: userId }) as (ConversationRow & { last_message_id: number; unread: number; mentions: number })[];
   return rows.map((r) => ({
     id: r.id,
     kind: r.kind,
@@ -215,8 +226,34 @@ export function listConversations(userId: string): Conversation[] {
     memberIds: r.kind === "channel" && r.private ? listMembers(r.id) : undefined,
     otherUserId: r.dm_key ? otherOf(r.dm_key, userId) : undefined,
     unread: r.unread,
+    mentions: r.mentions,
     lastMessageId: r.last_message_id,
+    canManage: r.kind === "channel" && (role === "admin" || r.created_by === userId),
   }));
+}
+
+/** May this person rename the channel and remove its members? Its creator, or an admin, and only if they can see it. */
+export function canManage(conversationId: string, user: { id: string; role: Role }): boolean {
+  const r = db().prepare(`select created_by from conversations c where c.id = @id and c.kind = 'channel' and ${VISIBLE}`).get({ id: conversationId, me: user.id }) as { created_by: string | null } | undefined;
+  return !!r && (user.role === "admin" || r.created_by === user.id);
+}
+
+/** Renames a channel or changes its description. False when the name is taken. */
+export function updateChannel(id: string, patch: { name?: string; topic?: string }): boolean {
+  try {
+    db().prepare("update conversations set name = coalesce(?, name), topic = coalesce(?, topic) where id = ? and kind = 'channel'").run(patch.name ?? null, patch.topic ?? null, id);
+  } catch (e) {
+    if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") return false;
+    throw e;
+  }
+  return true;
+}
+
+/** The people who can read a conversation, with their names: the ones a message may mention. */
+function readersOf(conversationId: string): { id: string; name: string }[] {
+  const audience = audienceOf(conversationId);
+  const everyone = db().prepare("select id, name from users").all() as { id: string; name: string }[];
+  return audience === "all" ? everyone : everyone.filter((u) => audience.includes(u.id));
 }
 
 /** Returns what the conversation is if this person may read and write in it. */
@@ -287,6 +324,7 @@ function hydrate(rows: MessageRow[]): Message[] {
   const marks = ids.map(() => "?").join(",");
   const files = db().prepare(`select id, message_id, name, mime, size from files where message_id in (${marks}) order by created_at`).all(...ids) as (FileInfo & { message_id: number })[];
   const reactions = db().prepare(`select message_id, emoji, user_id from reactions where message_id in (${marks}) order by created_at`).all(...ids) as { message_id: number; emoji: string; user_id: string }[];
+  const mentions = db().prepare(`select message_id, user_id from mentions where message_id in (${marks})`).all(...ids) as { message_id: number; user_id: string }[];
   const threads = db().prepare(`select parent_id, count(*) as n, max(created_at) as last from messages where parent_id in (${marks}) group by parent_id`).all(...ids) as { parent_id: number; n: number; last: string }[];
   return rows.map((r) => {
     const grouped = new Map<string, string[]>();
@@ -304,6 +342,7 @@ function hydrate(rows: MessageRow[]): Message[] {
       lastReplyAt: thread?.last ?? null,
       files: files.filter((f) => f.message_id === r.id).map(({ id, name, mime, size }) => ({ id, name, mime, size })),
       reactions: [...grouped].map(([emoji, userIds]) => ({ emoji, userIds })),
+      mentionIds: mentions.filter((x) => x.message_id === r.id).map((x) => x.user_id),
     };
   });
 }
@@ -345,14 +384,37 @@ export function addMessage(input: { conversationId: string; userId: string; body
     const { lastInsertRowid } = db().prepare("insert into messages (conversation_id, user_id, body, created_at, parent_id) values (?, ?, ?, ?, ?)").run(input.conversationId, input.userId, input.body, now(), input.parentId ?? null);
     const id = Number(lastInsertRowid);
     for (const fileId of input.fileIds) db().prepare("update files set message_id = ? where id = ? and user_id = ? and message_id is null").run(id, fileId, input.userId);
+    setMentions(id, input.conversationId, input.body);
     markRead(input.userId, input.conversationId, id);
     return getMessage(id)!;
   })();
 }
 
+/** Records who the text mentions, among the people who can read the conversation. */
+function setMentions(messageId: number, conversationId: string, body: string) {
+  db().prepare("delete from mentions where message_id = ?").run(messageId);
+  if (!body.includes("@")) return;
+  for (const userId of mentionedIds(body, readersOf(conversationId))) db().prepare("insert into mentions (message_id, user_id) values (?, ?)").run(messageId, userId);
+}
+
 export function editMessage(id: number, body: string): Message | null {
-  db().prepare("update messages set body = ?, edited_at = ? where id = ?").run(body, now(), id);
-  return getMessage(id);
+  return db().transaction(() => {
+    const { changes } = db().prepare("update messages set body = ?, edited_at = ? where id = ?").run(body, now(), id);
+    const message = changes ? getMessage(id) : null;
+    if (message) setMentions(id, message.conversationId, body);
+    return message && getMessage(id);
+  })();
+}
+
+/** Messages containing these words, newest first, among the conversations this person can read. */
+export function searchMessages(userId: string, query: string, limit = 30): SearchHit[] {
+  const words = query.trim().split(/\s+/).filter(Boolean).slice(0, 6);
+  if (!words.length) return [];
+  const like = words.map(() => "m.body like ? escape '\\'").join(" and ");
+  const rows = db()
+    .prepare(`select m.id, m.conversation_id, m.parent_id, m.user_id, m.body, m.created_at from messages m join conversations c on c.id = m.conversation_id where ${like} and ${VISIBLE.replaceAll("@me", "?")} order by m.id desc limit ?`)
+    .all(...words.map((w) => `%${w.replace(/[\\%_]/g, "\\$&")}%`), userId, limit) as MessageRow[];
+  return rows.map((r) => ({ id: r.id, conversationId: r.conversation_id, parentId: r.parent_id, userId: r.user_id, body: r.body.length > 300 ? `${r.body.slice(0, 300)}…` : r.body, createdAt: r.created_at }));
 }
 
 export const MAX_REACTIONS = 20;

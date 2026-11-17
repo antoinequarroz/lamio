@@ -11,6 +11,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const me = await currentUser();
   if (!me) return unauthorized();
-  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id), modules: listModules() };
+  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id, me.role), modules: listModules() };
   return NextResponse.json(state);
 }

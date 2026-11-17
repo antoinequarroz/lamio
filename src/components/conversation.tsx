@@ -1,14 +1,15 @@
 "use client";
 
-import { ArrowLeft, Hash, Lock, Users, X } from "lucide-react";
+import { ArrowLeft, Hash, Lock, Settings2, Users, X } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApp } from "@/lib/store";
 import type { Message } from "@/lib/types";
 import { api, cn, dayLabel } from "@/lib/utils";
 import { Composer } from "./composer";
-import { MembersDialog } from "./dialogs";
+import { ChannelDialog } from "./dialogs";
 import { MessageItem } from "./message";
 import { Avatar, Button } from "./ui";
 
@@ -31,7 +32,13 @@ export function ConversationView({ id }: { id: string }) {
   const [error, setError] = useState("");
   /** The thread open in the side panel: the id of the message that started it. */
   const [threadId, setThreadId] = useState<number | null>(null);
-  const [membersOpen, setMembersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Coming from a search result or a notification: ?m= is the message to show, ?t= its thread if it is a reply.
+  const params = useSearchParams();
+  const target = Number(params.get("m")) || null;
+  const targetThread = Number(params.get("t")) || null;
+  const reached = useRef<number | null>(null);
+  const tries = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
   /** Stay glued to the newest message unless the reader scrolled up. */
   const stick = useRef(true);
@@ -116,6 +123,25 @@ export function ConversationView({ id }: { id: string }) {
     }
   };
 
+  useEffect(() => {
+    if (!target || !messages || reached.current === target) return;
+    if (targetThread) {
+      reached.current = target;
+      return setThreadId(targetThread);
+    }
+    if (messages.some((m) => m.id === target)) {
+      reached.current = target;
+      stick.current = false;
+      requestAnimationFrame(() => flash(scroller.current, target));
+    } else if (hasMore && tries.current < 20) {
+      // Older than what is loaded: go back page by page until it shows up.
+      tries.current++;
+      loadOlder();
+    } else reached.current = target;
+    // loadOlder changes with every page, and each new page reruns this effect through `messages`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, targetThread, messages, hasMore]);
+
   if (!conversation) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
@@ -153,10 +179,10 @@ export function ConversationView({ id }: { id: string }) {
             <h1 className="truncate font-display text-[24px] leading-none">{isChannel ? conversation.name : title}</h1>
             <p className="mt-1 truncate text-[12.5px] text-ink-3">{subtitle}</p>
           </div>
-          {conversation.private && (
-            <Button size="sm" onClick={() => setMembersOpen(true)} aria-label={`Membres : ${people}`}>
-              <Users className="size-3.5" />
-              {count}
+          {isChannel && (conversation.private || conversation.canManage) && (
+            <Button size="sm" onClick={() => setSettingsOpen(true)} aria-label={conversation.private ? `Réglages du canal, ${people}` : "Réglages du canal"}>
+              {conversation.private ? <Users className="size-3.5" /> : <Settings2 className="size-3.5" />}
+              {conversation.private ? count : "Réglages"}
             </Button>
           )}
         </header>
@@ -227,16 +253,26 @@ export function ConversationView({ id }: { id: string }) {
         />
       </section>
 
-      {threadId !== null && <ThreadPanel key={threadId} conversationId={id} parentId={threadId} where={isChannel ? `#${conversation.name}` : title} onClose={closeThread} onParentChange={parentChanged} />}
-      {membersOpen && conversation.private && <MembersDialog conversation={conversation} onClose={() => setMembersOpen(false)} />}
+      {threadId !== null && <ThreadPanel key={threadId} conversationId={id} parentId={threadId} where={isChannel ? `#${conversation.name}` : title} onClose={closeThread} onParentChange={parentChanged} highlightId={targetThread === threadId ? target : null} />}
+      {settingsOpen && isChannel && <ChannelDialog key={conversation.id} conversation={conversation} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
 
-type ThreadProps = { conversationId: string; parentId: number; where: string; onClose: () => void; onParentChange: (m: Message) => void };
+/** Scrolls to a message and lights it up for a moment. */
+function flash(container: HTMLElement | null, messageId: number) {
+  const el = container?.querySelector(`[data-message="${messageId}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center" });
+  el.classList.remove("flash");
+  void (el as HTMLElement).offsetWidth;
+  el.classList.add("flash");
+}
+
+type ThreadProps = { conversationId: string; parentId: number; where: string; onClose: () => void; onParentChange: (m: Message) => void; highlightId?: number | null };
 
 /** A thread: the message that started it, then its replies. Beside the conversation, or instead of it on a small screen. */
-function ThreadPanel({ conversationId, parentId, where, onClose, onParentChange }: ThreadProps) {
+function ThreadPanel({ conversationId, parentId, where, onClose, onParentChange, highlightId }: ThreadProps) {
   const { listen } = useApp();
   const [parent, setParent] = useState<Message | null>(null);
   const [replies, setReplies] = useState<Message[] | null>(null);
@@ -281,6 +317,13 @@ function ThreadPanel({ conversationId, parentId, where, onClose, onParentChange 
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [replies]);
+
+  const loaded = replies !== null;
+  useEffect(() => {
+    if (!loaded || !highlightId) return;
+    stick.current = false;
+    requestAnimationFrame(() => flash(scroller.current, highlightId));
+  }, [loaded, highlightId]);
 
   const changed = (m: Message) => {
     if (m.id === parentId) {

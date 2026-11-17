@@ -238,6 +238,106 @@ describe("canaux privés", () => {
   });
 });
 
+describe("mentions et notifications", () => {
+  it("compte à part les messages qui me mentionnent, jusqu'à ce que je les lise", () => {
+    const { ana, bob, cleo, general } = team();
+    const of = (userId: string) => store.listConversations(userId).find((c) => c.id === general.id)!;
+    store.addMessage({ conversationId: general.id, userId: ana.id, body: "Bonjour", fileIds: [] });
+    const m = store.addMessage({ conversationId: general.id, userId: ana.id, body: "@Bob tu peux regarder ?", fileIds: [] })!;
+    expect(m.mentionIds).toEqual([bob.id]);
+    expect(of(bob.id)).toMatchObject({ unread: 2, mentions: 1 });
+    expect(of(cleo.id)).toMatchObject({ unread: 2, mentions: 0 });
+    store.markRead(bob.id, general.id, m.id);
+    expect(of(bob.id)).toMatchObject({ unread: 0, mentions: 0 });
+  });
+
+  it("@tous prévient tout le monde sauf l'auteur", () => {
+    const { ana, bob, cleo, general } = team();
+    store.addMessage({ conversationId: general.id, userId: ana.id, body: "@tous on démarre", fileIds: [] });
+    const mentions = (userId: string) => store.listConversations(userId).find((c) => c.id === general.id)!.mentions;
+    expect([mentions(ana.id), mentions(bob.id), mentions(cleo.id)]).toEqual([0, 1, 1]);
+  });
+
+  it("modifier un message refait ses mentions", () => {
+    const { ana, bob, cleo, general } = team();
+    const m = store.addMessage({ conversationId: general.id, userId: ana.id, body: "@Bob ?", fileIds: [] })!;
+    expect(store.editMessage(m.id, "@Cleo ?")!.mentionIds).toEqual([cleo.id]);
+    expect(store.editMessage(m.id, "personne")!.mentionIds).toEqual([]);
+    expect(store.listConversations(bob.id).find((c) => c.id === general.id)!.mentions).toBe(0);
+  });
+
+  it("dans un canal privé, on ne mentionne que ses membres", () => {
+    const { ana, bob, cleo } = team();
+    const id = store.createChannel({ name: "direction", private: true, createdBy: ana.id })!;
+    store.addMember(id, bob.id);
+    expect(store.addMessage({ conversationId: id, userId: ana.id, body: "@Bob et @Cleo", fileIds: [] })!.mentionIds).toEqual([bob.id]);
+    expect(store.addMessage({ conversationId: id, userId: ana.id, body: "@tous", fileIds: [] })!.mentionIds.sort()).toEqual([ana.id, bob.id].sort());
+    expect(cleo.id).toBeTruthy();
+  });
+});
+
+describe("gérer un canal", () => {
+  it("seuls son créateur et les admins peuvent le gérer", () => {
+    const { ana, bob, cleo } = team();
+    const id = store.createChannel({ name: "projets", createdBy: bob.id })!;
+    expect(store.canManage(id, bob)).toBe(true);
+    expect(store.canManage(id, ana)).toBe(true);
+    expect(store.canManage(id, cleo)).toBe(false);
+    expect(store.listConversations(bob.id, bob.role).find((c) => c.id === id)!.canManage).toBe(true);
+    expect(store.listConversations(cleo.id, cleo.role).find((c) => c.id === id)!.canManage).toBe(false);
+  });
+
+  it("un admin ne gère pas un canal privé dont il n'est pas membre", () => {
+    const { ana, bob } = team();
+    const id = store.createChannel({ name: "secret", private: true, createdBy: bob.id })!;
+    expect(store.canManage(id, ana)).toBe(false);
+  });
+
+  it("renommer garde les messages, et refuse un nom déjà pris", () => {
+    const { ana, general } = team();
+    const id = store.createChannel({ name: "projets", createdBy: ana.id })!;
+    store.addMessage({ conversationId: id, userId: ana.id, body: "un message", fileIds: [] });
+    expect(store.updateChannel(id, { name: "chantiers", topic: "Les chantiers en cours" })).toBe(true);
+    expect(store.listConversations(ana.id).find((c) => c.id === id)).toMatchObject({ name: "chantiers", topic: "Les chantiers en cours" });
+    expect(store.listMessages(id).messages).toHaveLength(1);
+    expect(store.updateChannel(id, { name: "general" })).toBe(false);
+    // Only the description: the name stays.
+    expect(store.updateChannel(general.id, { topic: "Tout le monde" })).toBe(true);
+    expect(store.listConversations(ana.id).find((c) => c.id === general.id)).toMatchObject({ name: "general", topic: "Tout le monde" });
+  });
+});
+
+describe("recherche", () => {
+  it("trouve les messages par mots, y compris dans les fils, les plus récents d'abord", () => {
+    const { ana, bob, general } = team();
+    const start = store.addMessage({ conversationId: general.id, userId: ana.id, body: "Le budget du projet Alpha", fileIds: [] })!;
+    const reply = store.addMessage({ conversationId: general.id, userId: bob.id, body: "Budget validé pour Alpha", fileIds: [], parentId: start.id })!;
+    store.addMessage({ conversationId: general.id, userId: bob.id, body: "Rien à voir", fileIds: [] });
+    expect(store.searchMessages(ana.id, "alpha budget").map((h) => h.id)).toEqual([reply.id, start.id]);
+    expect(store.searchMessages(ana.id, "alpha budget")[0].parentId).toBe(start.id);
+    expect(store.searchMessages(ana.id, "   ")).toEqual([]);
+  });
+
+  it("ne montre jamais un message d'une conversation fermée à la personne", () => {
+    const { ana, bob, cleo } = team();
+    const priv = store.createChannel({ name: "direction", private: true, createdBy: ana.id })!;
+    store.addMessage({ conversationId: priv, userId: ana.id, body: "salaire confidentiel", fileIds: [] });
+    const dm = store.openDm(ana.id, bob.id);
+    store.addMessage({ conversationId: dm.id, userId: ana.id, body: "confidentiel entre nous", fileIds: [] });
+    expect(store.searchMessages(ana.id, "confidentiel")).toHaveLength(2);
+    expect(store.searchMessages(bob.id, "confidentiel")).toHaveLength(1);
+    expect(store.searchMessages(cleo.id, "confidentiel")).toHaveLength(0);
+  });
+
+  it("prend % et _ pour du texte, pas pour des jokers", () => {
+    const { ana, general } = team();
+    store.addMessage({ conversationId: general.id, userId: ana.id, body: "Remise de 20% accordée", fileIds: [] });
+    store.addMessage({ conversationId: general.id, userId: ana.id, body: "Remise de 200 francs", fileIds: [] });
+    expect(store.searchMessages(ana.id, "20%").map((h) => h.body)).toEqual(["Remise de 20% accordée"]);
+    expect(store.searchMessages(ana.id, "2_0")).toEqual([]);
+  });
+});
+
 describe("anciennes bases", () => {
   it("une base de la v0.1 reçoit les nouvelles colonnes sans perdre ses messages", async () => {
     const Database = (await import("better-sqlite3")).default;

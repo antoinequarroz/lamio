@@ -3,6 +3,7 @@
 import { Download, FileIcon, MessageSquare, Pencil, SmilePlus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { splitMentions } from "@/lib/mentions";
 import { useApp } from "@/lib/store";
 import type { Message } from "@/lib/types";
 import { api, clock, cn, fileSize } from "@/lib/utils";
@@ -24,8 +25,11 @@ type Props = {
 };
 
 export function MessageItem({ message: m, grouped, inThread, onOpenThread, onChange, onRemove }: Props) {
-  const { me, userById } = useApp();
+  const { me, userById, users } = useApp();
   const author = userById(m.userId);
+  // Only the people the server recorded as mentioned are highlighted: a name typed for someone who
+  // cannot read this conversation stays plain text.
+  const mentioned = m.mentionIds.length ? users.filter((u) => m.mentionIds.includes(u.id)) : [];
   const [editing, setEditing] = useState(false);
   const [picking, setPicking] = useState(false);
   /** On a touch screen there is no hover: a tap on the message shows its actions. */
@@ -80,7 +84,7 @@ export function MessageItem({ message: m, grouped, inThread, onOpenThread, onCha
         ) : (
           m.body && (
             <p className="whitespace-pre-wrap text-[14.5px] leading-[1.5] [overflow-wrap:anywhere]">
-              {linkify(m.body)}
+              {rich(m.body, mentioned, me.id)}
               {m.editedAt && (
                 <span className="ml-1.5 text-[11.5px] text-ink-3" title={`Modifié à ${clock(m.editedAt)}`}>
                   (modifié)
@@ -243,6 +247,20 @@ function EditForm({ message, onDone, onChange }: { message: Message; onDone: () 
       </div>
     </div>
   );
+}
+
+/** The text of a message: mentions highlighted (mine more strongly), web addresses turned into links. */
+function rich(text: string, mentioned: { id: string; name: string }[], meId: string) {
+  if (!mentioned.length) return linkify(text);
+  return splitMentions(text, mentioned).map((part, i) => {
+    if (!part.userId && !part.everyone) return <span key={i}>{linkify(part.text)}</span>;
+    const forMe = part.everyone || part.userId === meId;
+    return (
+      <span key={i} className={cn("rounded px-1 py-px font-medium", forMe ? "bg-accent text-accent-ink" : "bg-accent-soft text-accent")}>
+        {part.text}
+      </span>
+    );
+  });
 }
 
 /** Plain text, with web addresses turned into links. */

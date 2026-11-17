@@ -1,26 +1,27 @@
-# Base (nom de code)
-
-> Le nom définitif n'est pas encore choisi. Il se change dans [`src/lib/brand.ts`](src/lib/brand.ts), puis ici et dans `package.json`.
+# Lamio
 
 La messagerie de l'équipe, et la base de la suite. Canaux, messages directs, fichiers : c'est ici qu'on se parle, et c'est ici que les autres outils viennent se brancher.
 
-Cet outil fait partie de la même suite que [Cairn](https://github.com/antoinequarroz/Cairn) (notes et coffre), [Metricove](https://github.com/antoinequarroz/metricove_v2) (réseaux sociaux) et [Alfred](https://github.com/antoinequarroz/Alfred) (calendrier) : même stack, même design, une autre couleur. Ici, le violet.
+Lamio fait partie de la même suite que [Cairn](https://github.com/antoinequarroz/Cairn) (notes et coffre), [Metricove](https://github.com/antoinequarroz/metricove_v2) (réseaux sociaux) et [Alfred](https://github.com/antoinequarroz/Alfred) (calendrier) : même stack, même design, une autre couleur. Ici, le violet.
 
 ![La messagerie, en clair](docs/img/clair.png)
-![Un fil de réponses, en sombre](docs/img/sombre.png)
+![Une mention qui arrive, en sombre](docs/img/sombre.png)
 
 ## Ce qui marche aujourd'hui
 
 - **Comptes** : la première personne qui ouvre l'app crée son compte et devient administratrice. Elle ajoute ensuite les membres dans Réglages.
 - **Canaux** : ouverts à toute l'équipe, créés en deux clics. `#general` existe dès le départ.
 - **Canaux privés** : visibles seulement de leurs membres. Un membre peut en ajouter d'autres, chacun peut quitter.
+- **Réglages du canal** : la personne qui l'a créé (ou une administratrice) le renomme, change son sujet et retire un membre.
 - **Messages directs** : à une personne, ou à soi-même pour garder une note.
 - **Fils de réponses** : on répond à un message dans un panneau à côté, sans encombrer le canal.
 - **Réactions** : un emoji sur un message, en un clic.
 - **Modifier ou supprimer** ses messages. Un message modifié le signale.
 - **Fichiers** : par le trombone, en glisser-déposer ou en collant. Les images s'affichent dans la conversation.
+- **Mentions** : `@` propose les personnes de la conversation, `@tous` prévient tout le monde. Une mention se voit dans le message et dans la barre latérale.
+- **Notifications** : un message direct ou une mention s'annonce dans l'app, et sur l'appareil si on l'active dans Réglages.
 - **En direct** : les messages arrivent sans recharger la page, avec les compteurs de non lus.
-- **Recherche ⌘K** : aller à un canal, une personne, une action.
+- **Recherche ⌘K** : aller à un canal, une personne, une action, ou retrouver un message et y sauter.
 - **Modules** : la liste des outils de la suite, et ceux qui sont branchés.
 - **Clair et sombre** : comme l'appareil, ou forcé dans Réglages.
 - **Installable** comme une app sur Mac (Safari, « Ajouter au Dock ») et sur iPhone (« Sur l'écran d'accueil »).
@@ -77,12 +78,11 @@ Next.js 15, React 19, Tailwind 4, SQLite (better-sqlite3). Un seul processus, un
 
 ## La suite
 
-- Mentions et notifications.
-- Recherche dans les messages.
-- Retirer quelqu'un d'un canal privé, renommer ou archiver un canal.
-- Une seule connexion pour la base, Cairn et Metricove.
+- Archiver ou supprimer un canal.
+- Notifications quand l'app est fermée.
+- Une seule connexion pour Lamio, Cairn et Metricove.
 - Apps Mac (Tauri) et iOS, à partir du même code.
 
 ## Déploiement
 
-`deploy/docker-compose.yml` lance l'app sur le VPS derrière le Caddy déjà en place. Les données vivent dans le volume `app-data` (base et fichiers) : c'est lui qu'il faut sauvegarder.
+`deploy/docker-compose.yml` lance Lamio sur le VPS derrière le Caddy déjà en place. Les données vivent dans le volume `app-data` (base et fichiers) : c'est lui qu'il faut sauvegarder.

@@ -20,6 +20,8 @@ export type Message = {
   lastReplyAt: string | null;
   files: FileInfo[];
   reactions: Reaction[];
+  /** The people this message mentions (@Name, or everybody with @tous). */
+  mentionIds: string[];
 };
 
 export type Conversation = {
@@ -35,8 +37,14 @@ export type Conversation = {
   /** Direct message: the other person (yourself for your own notes). */
   otherUserId?: string;
   unread: number;
+  /** Among the unread messages, how many mention me. */
+  mentions: number;
   lastMessageId: number;
+  /** I may rename this channel and manage its members (its creator, or an admin). */
+  canManage: boolean;
 };
+
+export type SearchHit = { id: number; conversationId: string; parentId: number | null; userId: string; body: string; createdAt: string };
 
 export type ModuleStatus = "core" | "linked" | "soon";
 
