@@ -15,7 +15,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ needsSetup: boolean }>("/api/auth/status").then(
+    // With a time limit: a request that never answers must not leave the page empty.
+    api<{ needsSetup: boolean }>("/api/auth/status", { signal: AbortSignal.timeout(6000) }).then(
       (s) => setSetup(s.needsSetup),
       () => setSetup(false),
     );
@@ -35,7 +36,13 @@ export default function LoginPage() {
     }
   };
 
-  if (setup === null) return null;
+  // Until the server says whether an account exists: the logo, rather than an empty page.
+  if (setup === null)
+    return (
+      <div className="flex min-h-dvh items-center justify-center p-4">
+        <Logo className="size-9 animate-pulse" />
+      </div>
+    );
 
   return (
     <div className="flex min-h-dvh items-center justify-center p-4">
