@@ -4,6 +4,7 @@
   "version": "0.4.0",
   "description": "Lamio pour Mac et iPhone : la fenêtre de l'app, qui ouvre le Lamio en ligne.",
   "scripts": {
+    "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "ios:init": "tauri ios init",

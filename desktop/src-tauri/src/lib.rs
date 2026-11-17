@@ -59,12 +59,13 @@ pub fn run() {
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
             #[cfg(mobile)]
             let builder = builder.initialization_script(SAME_WINDOW_LINKS);
+            // On the iPhone the window is the whole screen: a size would shrink it.
+            #[cfg(desktop)]
+            let builder = builder.inner_size(1240.0, 820.0).min_inner_size(420.0, 560.0);
             builder
                 .title("Lamio")
                 // Tells the waiting page which server to reach.
                 .initialization_script(format!("window.__LAMIO_URL__ = {:?};", home.as_str()))
-                .inner_size(1240.0, 820.0)
-                .min_inner_size(420.0, 560.0)
                 // Links that ask for a new tab (Cairn, Metricove, a link in a message) go to the browser.
                 .on_new_window(|url, _features| {
                     open_in_browser(&url);
