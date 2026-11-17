@@ -4,13 +4,24 @@ export type User = { id: string; name: string; email: string; role: Role; create
 
 export type FileInfo = { id: string; name: string; mime: string; size: number };
 
+export type Reaction = { emoji: string; userIds: string[] };
+
 export type Message = {
   id: number;
   conversationId: string;
   userId: string;
   body: string;
   createdAt: string;
+  editedAt: string | null;
+  /** Set on a reply: the message that started the thread. Threads are one level deep. */
+  parentId: number | null;
+  /** On a message that started a thread. */
+  replyCount: number;
+  lastReplyAt: string | null;
   files: FileInfo[];
+  reactions: Reaction[];
+  /** The people this message mentions (@Name, or everybody with @tous). */
+  mentionIds: string[];
 };
 
 export type Conversation = {
@@ -19,11 +30,21 @@ export type Conversation = {
   /** Channel name (without the #). Empty for a direct message. */
   name: string;
   topic: string;
+  /** Private channel: only its members see it. */
+  private: boolean;
+  /** Private channel: who is in it. */
+  memberIds?: string[];
   /** Direct message: the other person (yourself for your own notes). */
   otherUserId?: string;
   unread: number;
+  /** Among the unread messages, how many mention me. */
+  mentions: number;
   lastMessageId: number;
+  /** I may rename this channel and manage its members (its creator, or an admin). */
+  canManage: boolean;
 };
+
+export type SearchHit = { id: number; conversationId: string; parentId: number | null; userId: string; body: string; createdAt: string };
 
 export type ModuleStatus = "core" | "linked" | "soon";
 
@@ -38,6 +59,12 @@ export type ModuleInfo = {
   href?: string;
   /** Where the tool lives when it is linked (its own address, for now). */
   url?: string;
+  /** The tool accepts the account of this app ("Se connecter avec Lamio"). */
+  sso?: boolean;
+  /** With single sign-on: whether I may open it. */
+  allowed?: boolean;
+  /** With single sign-on, for admins: the members who may open it. */
+  allowedIds?: string[];
 };
 
 export type AppState = { me: User; users: User[]; conversations: Conversation[]; modules: ModuleInfo[] };
@@ -45,5 +72,6 @@ export type AppState = { me: User; users: User[]; conversations: Conversation[];
 /** What the server pushes over /api/events. */
 export type ServerEvent =
   | { type: "message"; message: Message }
-  | { type: "message-deleted"; conversationId: string; id: number }
+  | { type: "message-updated"; message: Message }
+  | { type: "message-deleted"; conversationId: string; id: number; parentId: number | null }
   | { type: "refresh" };

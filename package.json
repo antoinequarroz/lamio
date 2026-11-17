@@ -1,6 +1,6 @@
 {
-  "name": "cordee",
-  "version": "0.1.0",
+  "name": "lamio",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

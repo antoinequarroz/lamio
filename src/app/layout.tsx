@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import { themeScript } from "@/lib/theme-script";
 import "./globals.css";
 
@@ -8,10 +9,10 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 const display = Instrument_Serif({ variable: "--font-display-serif", subsets: ["latin"], weight: "400" });
 
 export const metadata: Metadata = {
-  title: "Cordée",
-  description: "La messagerie d'équipe et le socle de la suite : canaux, messages directs, fichiers, modules.",
+  title: APP_NAME,
+  description: APP_TAGLINE,
   robots: { index: false, follow: false },
-  appleWebApp: { capable: true, title: "Cordée", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

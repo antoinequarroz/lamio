@@ -8,3 +8,4 @@ data
 .claude
 *.md
 !README.md
+desktop

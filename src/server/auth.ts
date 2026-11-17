@@ -5,7 +5,7 @@ import type { NextResponse } from "next/server";
 import type { User } from "@/lib/types";
 import { addSession, removeSession, sessionUser } from "./db";
 
-export const SESSION_COOKIE = "cordee_session";
+export const SESSION_COOKIE = "app_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 
 const sha256 = (value: string) => crypto.createHash("sha256").update(value).digest("hex");

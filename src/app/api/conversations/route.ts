@@ -5,7 +5,7 @@ import { createChannel, getUser, openDm } from "@/server/db";
 import { publish } from "@/server/events";
 import { body, fail, text, unauthorized } from "@/server/http";
 
-/** Creates a channel ({ kind: "channel", name, topic }) or opens a direct message ({ kind: "dm", userId }). */
+/** Creates a channel ({ kind: "channel", name, topic, private }) or opens a direct message ({ kind: "dm", userId }). */
 export async function POST(req: Request) {
   const me = await currentUser();
   if (!me) return unauthorized();
@@ -23,8 +23,10 @@ export async function POST(req: Request) {
   if (!name) return fail("Donne un nom au canal");
   const topic = data.topic === undefined || data.topic === "" ? "" : text(data.topic, 200);
   if (topic === null) return fail("Description trop longue");
-  const id = createChannel({ name, topic, createdBy: me.id });
-  if (!id) return fail(`Le canal #${name} existe déjà`, 409);
-  publish({ type: "refresh" }, "all");
+  const isPrivate = data.private === true;
+  const id = createChannel({ name, topic, private: isPrivate, createdBy: me.id });
+  // The same answer whether the name belongs to a public channel or to a private one I cannot see.
+  if (!id) return fail(`Le nom #${name} est déjà pris`, 409);
+  publish({ type: "refresh" }, isPrivate ? [me.id] : "all");
   return NextResponse.json({ id });
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/logo";
 import { Button, inputClass } from "@/components/ui";
-import { api } from "@/lib/utils";
+import { api, APP_NAME, safeNext } from "@/lib/utils";
 
 export default function LoginPage() {
   /** No account yet: the first person to arrive creates theirs and becomes admin. */
@@ -15,7 +15,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ needsSetup: boolean }>("/api/auth/status").then(
+    // With a time limit: a request that never answers must not leave the page empty.
+    api<{ needsSetup: boolean }>("/api/auth/status", { signal: AbortSignal.timeout(6000) }).then(
       (s) => setSetup(s.needsSetup),
       () => setSetup(false),
     );
@@ -27,20 +28,27 @@ export default function LoginPage() {
     setError("");
     try {
       await api(setup ? "/api/auth/setup" : "/api/auth/login", { method: "POST", json: { name, email, password } });
-      window.location.href = "/c";
+      // Coming from a tool of the suite ("Se connecter avec Lamio"): go on with that sign-in.
+      window.location.href = safeNext(new URLSearchParams(window.location.search).get("next"));
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
     }
   };
 
-  if (setup === null) return null;
+  // Until the server says whether an account exists: the logo, rather than an empty page.
+  if (setup === null)
+    return (
+      <div className="flex min-h-dvh items-center justify-center p-4">
+        <Logo className="size-9 animate-pulse" />
+      </div>
+    );
 
   return (
     <div className="flex min-h-dvh items-center justify-center p-4">
       <form onSubmit={submit} className="rise w-full max-w-[360px] rounded-2xl border border-line bg-surface/80 p-7 shadow-card backdrop-blur-xl">
         <Logo className="size-9" />
-        <h1 className="mt-5 font-display text-[30px] leading-none">Cordée</h1>
+        <h1 className="mt-5 font-display text-[30px] leading-none">{APP_NAME}</h1>
         <p className="mt-2 text-[13px] text-ink-3">{setup ? "Bienvenue. Crée ton compte : ce sera celui de l'administrateur." : "Connecte-toi pour retrouver ton équipe."}</p>
         <div className="mt-6 flex flex-col gap-2.5">
           {setup && <input autoFocus autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ton nom" maxLength={80} className={inputClass} />}

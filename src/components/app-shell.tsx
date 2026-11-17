@@ -1,12 +1,15 @@
 "use client";
 
-import { ArrowUpRight, Hash, LayoutGrid, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, Hash, LayoutGrid, Lock, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect } from "react";
-import { Toaster } from "sonner";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
+import { toast, Toaster } from "sonner";
+import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
-import { APP_NAME, cn } from "@/lib/utils";
+import type { Conversation } from "@/lib/types";
+import { APP_VERSION } from "@/lib/brand";
+import { APP_NAME, cn, moduleLink } from "@/lib/utils";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
 import { Logo } from "./logo";
@@ -51,9 +54,10 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0">{children}</div>
       </main>
       <CommandMenu />
+      <Notifier />
       {dialog === "channel" && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === "dm" && <NewDmDialog onClose={() => setDialog(null)} />}
-      <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans" }} />
+      <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
     </div>
   );
 }
@@ -62,14 +66,15 @@ function Sidebar() {
   const pathname = usePathname();
   const { me, conversations, modules, setCommandOpen, setDialog } = useApp();
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
-  const linked = modules.filter((m) => m.status === "linked");
+  const mine = conversations.reduce((n, c) => n + forMe(c), 0);
+  const linked = modules.filter((m) => m.status === "linked" && moduleLink(m));
 
   return (
     <>
       <div className="flex items-center gap-2 px-1.5 pb-3">
         <Logo />
         <span className="text-[15px] font-semibold tracking-[-0.01em]">{APP_NAME}</span>
-        <span className="ml-auto rounded-md border border-line px-1.5 py-px font-mono text-[10px] text-ink-3">v0.1</span>
+        <span className="ml-auto rounded-md border border-line px-1.5 py-px font-mono text-[10px] text-ink-3">v{APP_VERSION}</span>
       </div>
 
       <div className="mb-2 flex gap-1.5">
@@ -93,7 +98,7 @@ function Sidebar() {
             >
               <Icon className={cn("size-4", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />
               {label}
-              {href === "/c" && unread > 0 && <Badge n={unread} />}
+              {href === "/c" && unread > 0 && <Badge n={mine || unread} strong={mine > 0} />}
             </Link>
           );
         })}
@@ -105,7 +110,7 @@ function Sidebar() {
           <>
             <SectionTitle>Suite</SectionTitle>
             {linked.map((m) => (
-              <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="group flex h-8 shrink-0 items-center gap-2.5 rounded-lg px-2 text-[13.5px] text-ink-2 transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink">
+              <a key={m.id} href={moduleLink(m)} target="_blank" rel="noreferrer" className="group flex h-8 shrink-0 items-center gap-2.5 rounded-lg px-2 text-[13.5px] text-ink-2 transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink">
                 <ModuleIcon icon={m.icon} className="size-4 text-ink-3" />
                 {m.name}
                 <ArrowUpRight className="ml-auto size-3.5 text-ink-3 opacity-0 transition-opacity group-hover:opacity-100" />
@@ -147,8 +152,46 @@ function SectionTitle({ children, onAdd, addLabel }: { children: React.ReactNode
   );
 }
 
-function Badge({ n }: { n: number }) {
-  return <span className="tabular ml-auto rounded-full bg-accent px-1.5 text-[10.5px] leading-[17px] font-semibold text-accent-ink">{n > 99 ? "99+" : n}</span>;
+/** Unread counter. `strong` (accent colour) when it is for me: a mention, or a direct message. */
+function Badge({ n, strong, mention }: { n: number; strong?: boolean; mention?: boolean }) {
+  return (
+    <span className={cn("tabular ml-auto rounded-full px-1.5 text-[10.5px] leading-[17px] font-semibold", strong ? "bg-accent text-accent-ink" : "bg-ink/[0.09] text-ink-2")}>
+      {mention && "@"}
+      {n > 99 ? "99+" : n}
+    </span>
+  );
+}
+
+/** What is waiting for me personally in a conversation: its mentions, or every message of a direct one. */
+const forMe = (c: Conversation) => (c.kind === "dm" ? c.unread : c.mentions);
+
+/** Tells me about a mention or a direct message that arrives while I am looking elsewhere. */
+function Notifier() {
+  const router = useRouter();
+  const { listen, isReading, conversations, userById, titleOf, me } = useApp();
+  const latest = useRef({ conversations, userById, titleOf });
+  latest.current = { conversations, userById, titleOf };
+
+  useEffect(
+    () =>
+      listen((event) => {
+        if (event.type !== "message") return;
+        const m = event.message;
+        const conversation = latest.current.conversations.find((c) => c.id === m.conversationId);
+        // Not in my list yet: the first message of a new direct conversation.
+        const direct = !conversation || conversation.kind === "dm";
+        if (m.userId === me.id || isReading(m.conversationId) || !(direct || m.mentionIds.includes(me.id))) return;
+
+        const author = latest.current.userById(m.userId)?.name ?? "Quelqu'un";
+        const title = direct || !conversation ? author : `${author} dans ${latest.current.titleOf(conversation)}`;
+        const text = m.body || (m.files.length ? "A envoyé un fichier" : "");
+        const open = () => router.push(`/c/${m.conversationId}?m=${m.id}${m.parentId ? `&t=${m.parentId}` : ""}`);
+        if (document.hidden) deviceNotify(title, text, `m${m.id}`, open);
+        else toast(title, { description: text.length > 140 ? `${text.slice(0, 140)}…` : text, action: { label: "Ouvrir", onClick: open } });
+      }),
+    [listen, isReading, me.id, router],
+  );
+  return null;
 }
 
 /** Channels then direct messages. In the sidebar on desktop, full page on a phone. */
@@ -170,9 +213,9 @@ export function ConversationList() {
         const active = pathname === `/c/${c.id}`;
         return (
           <Link key={c.id} href={`/c/${c.id}`} className={row(active, c.unread)}>
-            <Hash className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />
+            {c.private ? <Lock className={cn("size-4 shrink-0 p-px", active ? "text-accent" : "text-ink-3")} strokeWidth={2} /> : <Hash className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />}
             <span className="truncate">{c.name}</span>
-            {c.unread > 0 && <Badge n={c.unread} />}
+            {c.unread > 0 && <Badge n={c.mentions || c.unread} strong={c.mentions > 0} mention={c.mentions > 0} />}
           </Link>
         );
       })}
@@ -187,7 +230,7 @@ export function ConversationList() {
           <Link key={c.id} href={`/c/${c.id}`} className={row(active, c.unread)}>
             <Avatar id={other?.id ?? c.id} name={other?.name ?? "?"} size="xs" />
             <span className="truncate">{other?.id === me.id ? `${me.name} (toi)` : titleOf(c)}</span>
-            {c.unread > 0 && <Badge n={c.unread} />}
+            {c.unread > 0 && <Badge n={c.unread} strong />}
           </Link>
         );
       })}

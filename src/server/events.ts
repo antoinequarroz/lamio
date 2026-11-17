@@ -5,8 +5,8 @@ import type { ServerEvent } from "@/lib/types";
 // LISTEN/NOTIFY or Redis, behind the same two functions.
 type Listener = { userId: string; send: (event: ServerEvent) => void };
 
-const globalForEvents = globalThis as unknown as { __cordeeListeners?: Set<Listener> };
-const listeners = (globalForEvents.__cordeeListeners ??= new Set());
+const globalForEvents = globalThis as unknown as { __appListeners?: Set<Listener> };
+const listeners = (globalForEvents.__appListeners ??= new Set());
 
 export function subscribe(userId: string, send: Listener["send"]) {
   const listener = { userId, send };

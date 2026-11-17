@@ -1,10 +1,12 @@
 "use client";
 
+import { Lock, LogOut, UserMinus, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useApp } from "@/lib/store";
-import { api, slugify } from "@/lib/utils";
+import type { Conversation } from "@/lib/types";
+import { api, cn, slugify } from "@/lib/utils";
 import { Avatar, Button, Field, inputClass, Modal } from "./ui";
 
 export function NewChannelDialog({ onClose }: { onClose: () => void }) {
@@ -12,6 +14,7 @@ export function NewChannelDialog({ onClose }: { onClose: () => void }) {
   const { reload } = useApp();
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
+  const [isPrivate, setPrivate] = useState(false);
   const [busy, setBusy] = useState(false);
   const slug = slugify(name);
 
@@ -19,7 +22,7 @@ export function NewChannelDialog({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     setBusy(true);
     try {
-      const { id } = await api<{ id: string }>("/api/conversations", { method: "POST", json: { kind: "channel", name, topic } });
+      const { id } = await api<{ id: string }>("/api/conversations", { method: "POST", json: { kind: "channel", name, topic, private: isPrivate } });
       await reload();
       onClose();
       router.push(`/c/${id}`);
@@ -38,6 +41,16 @@ export function NewChannelDialog({ onClose }: { onClose: () => void }) {
         <Field label="Description (facultatif)">
           <input value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={200} placeholder="À quoi sert ce canal ?" className={inputClass} />
         </Field>
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-surface-2 p-3">
+          <input type="checkbox" checked={isPrivate} onChange={(e) => setPrivate(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+          <span>
+            <span className="flex items-center gap-1.5 text-[13.5px] font-medium">
+              <Lock className="size-3.5 text-ink-3" />
+              Canal privé
+            </span>
+            <span className="mt-0.5 block text-[12.5px] text-ink-3">Seules les personnes que tu y ajoutes le voient. Sinon, il est ouvert à toute l&apos;équipe.</span>
+          </span>
+        </label>
         <div className="mt-2 flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
             Annuler
@@ -88,6 +101,125 @@ export function NewDmDialog({ onClose }: { onClose: () => void }) {
         {!people.length && <p className="py-6 text-center text-[13px] text-ink-3">Personne ne correspond.</p>}
       </div>
       {users.length === 1 && <p className="mt-3 text-[12.5px] text-ink-3">Tu es seul pour l&apos;instant. Ajoute des membres dans Réglages.</p>}
+    </Modal>
+  );
+}
+
+/** A channel's settings: its name and description, and for a private one its members. */
+export function ChannelDialog({ conversation, onClose }: { conversation: Conversation; onClose: () => void }) {
+  const router = useRouter();
+  const { users, me, reload } = useApp();
+  const [name, setName] = useState(conversation.name);
+  const [topic, setTopic] = useState(conversation.topic);
+  const [busy, setBusy] = useState(false);
+  const slug = slugify(name);
+  const changed = slug !== conversation.name || topic.trim() !== conversation.topic;
+  const members = users.filter((u) => conversation.memberIds?.includes(u.id));
+  const others = users.filter((u) => !conversation.memberIds?.includes(u.id));
+  const url = `/api/conversations/${conversation.id}`;
+
+  const run = async (action: () => Promise<unknown>) => {
+    try {
+      await action();
+      await reload();
+      return true;
+    } catch (err) {
+      toast.error((err as Error).message);
+      return false;
+    }
+  };
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    if (await run(() => api(url, { method: "PATCH", json: { name, topic } }))) toast("Canal mis à jour");
+    setBusy(false);
+  };
+
+  const remove = (userId: string, who: string) => window.confirm(`Retirer ${who} de #${conversation.name} ?`) && run(() => api(`${url}/members?userId=${encodeURIComponent(userId)}`, { method: "DELETE" }));
+
+  const leave = async () => {
+    const last = members.length === 1;
+    if (!window.confirm(last ? `Tu es la dernière personne dans #${conversation.name} : en le quittant, le canal et ses messages seront supprimés. Continuer ?` : `Quitter #${conversation.name} ? Il faudra qu'un membre t'y ajoute à nouveau pour y revenir.`)) return;
+    try {
+      await api(`${url}/members`, { method: "DELETE" });
+      onClose();
+      router.push("/c");
+      await reload();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  return (
+    <Modal title={`#${conversation.name}`} onClose={onClose}>
+      {conversation.canManage && (
+        <form onSubmit={save} className="flex flex-col gap-3">
+          <Field label="Nom" hint={slug && slug !== conversation.name ? `Il s'appellera #${slug}` : undefined}>
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} className={inputClass} />
+          </Field>
+          <Field label="Description">
+            <input value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={200} placeholder="À quoi sert ce canal ?" className={inputClass} />
+          </Field>
+          <Button variant="primary" className="self-start" disabled={busy || !slug || !changed}>
+            Enregistrer
+          </Button>
+        </form>
+      )}
+
+      {conversation.private && (
+        <div className={cn(conversation.canManage && "mt-4 border-t border-line pt-4")}>
+          <span className="text-[12px] font-medium text-ink-2">
+            {members.length} {members.length > 1 ? "membres" : "membre"}
+          </span>
+          <ul className="scroll-thin -mx-2 mt-1.5 flex max-h-[200px] flex-col gap-px overflow-y-auto px-2">
+            {members.map((u) => (
+              <li key={u.id} className="flex items-center gap-2.5 px-2 py-1.5">
+                <Avatar id={u.id} name={u.name} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13.5px] font-medium leading-tight">
+                    {u.name}
+                    {u.id === me.id && <span className="font-normal text-ink-3"> (toi)</span>}
+                  </span>
+                  <span className="block truncate text-[12px] leading-tight text-ink-3">{u.email}</span>
+                </span>
+                {conversation.canManage && u.id !== me.id && (
+                  <Button size="sm" variant="ghost" onClick={() => remove(u.id, u.name)} aria-label={`Retirer ${u.name}`}>
+                    <UserMinus className="size-3.5" />
+                    Retirer
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {others.length > 0 && (
+            <div className="mt-3 border-t border-line pt-3">
+              <span className="text-[12px] font-medium text-ink-2">Ajouter quelqu&apos;un</span>
+              <div className="scroll-thin -mx-2 mt-1.5 flex max-h-[160px] flex-col gap-px overflow-y-auto px-2">
+                {others.map((u) => (
+                  <button key={u.id} onClick={() => run(() => api(`${url}/members`, { method: "POST", json: { userId: u.id } }))} className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-ink/[0.05]">
+                    <Avatar id={u.id} name={u.name} size="sm" />
+                    <span className="min-w-0 flex-1 truncate text-[13.5px]">{u.name}</span>
+                    <UserPlus className="size-4 text-ink-3 group-hover:text-accent" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-between gap-2 border-t border-line pt-4">
+        {conversation.private ? (
+          <Button variant="danger" onClick={leave}>
+            <LogOut className="size-4" />
+            Quitter le canal
+          </Button>
+        ) : (
+          <span />
+        )}
+        <Button onClick={onClose}>Fermer</Button>
+      </div>
     </Modal>
   );
 }

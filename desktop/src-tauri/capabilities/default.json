@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "La fenêtre charge un site distant : elle n'a accès à aucune commande de l'app.",
+  "windows": ["main"],
+  "permissions": []
+}

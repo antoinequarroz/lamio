@@ -189,6 +189,16 @@ body::before {
   animation: fade 200ms var(--ease-out) both;
 }
 
+/* A message reached from a search result or a notification lights up for a moment. */
+@keyframes flash {
+  from {
+    background: var(--accent-soft);
+  }
+}
+.flash {
+  animation: flash 2.2s var(--ease-out) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .dialog-popup,

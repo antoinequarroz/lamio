@@ -17,6 +17,8 @@ type Store = AppState & {
   /** The conversation on screen: its messages are read as they arrive. */
   setActive: (id: string | null) => void;
   markRead: (id: string, messageId: number) => void;
+  /** Is this conversation on screen, in a visible tab, right now? */
+  isReading: (id: string) => boolean;
   listen: (fn: (event: LiveEvent) => void) => () => void;
   commandOpen: boolean;
   setCommandOpen: (open: boolean) => void;
@@ -48,7 +50,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       meId.current = next.me.id;
       known.current = new Set(next.conversations.map((c) => c.id));
       // The conversation on screen is being read: its counter stays at zero.
-      setState({ ...next, conversations: next.conversations.map((c) => (c.id === active.current && !document.hidden ? { ...c, unread: 0 } : c)) });
+      setState({ ...next, conversations: next.conversations.map((c) => (c.id === active.current && !document.hidden ? { ...c, unread: 0, mentions: 0 } : c)) });
       setError("");
     } catch (e) {
       setError((e as Error).message);
@@ -75,11 +77,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const event = JSON.parse(e.data) as ServerEvent;
         if (event.type === "refresh") return void reload();
         if (event.type === "message") {
-          const { conversationId, id, userId } = event.message;
+          const { conversationId, id, userId, mentionIds } = event.message;
           const reading = conversationId === active.current && !document.hidden;
+          const counts = !reading && userId !== meId.current;
+          const mentioned = counts && mentionIds.includes(meId.current);
           // A direct message from someone new: the conversation is not in the list yet.
           if (!known.current.has(conversationId)) void reload();
-          setState((s) => s && { ...s, conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, lastMessageId: Math.max(c.lastMessageId, id), unread: reading || userId === meId.current ? c.unread : c.unread + 1 } : c)) });
+          setState((s) => s && { ...s, conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, lastMessageId: Math.max(c.lastMessageId, id), unread: counts ? c.unread + 1 : c.unread, mentions: mentioned ? c.mentions + 1 : c.mentions } : c)) });
         }
         listeners.current.forEach((fn) => fn(event));
       };
@@ -89,13 +93,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [reload]);
 
   const markRead = useCallback((id: string, messageId: number) => {
-    setState((s) => (s && s.conversations.some((c) => c.id === id && c.unread) ? { ...s, conversations: s.conversations.map((c) => (c.id === id ? { ...c, unread: 0 } : c)) } : s));
+    setState((s) => (s && s.conversations.some((c) => c.id === id && (c.unread || c.mentions)) ? { ...s, conversations: s.conversations.map((c) => (c.id === id ? { ...c, unread: 0, mentions: 0 } : c)) } : s));
     if (messageId > 0) api(`/api/conversations/${id}/read`, { method: "POST", json: { messageId } }).catch(() => {});
   }, []);
 
   const setActive = useCallback((id: string | null) => {
     active.current = id;
   }, []);
+
+  const isReading = useCallback((id: string) => id === active.current && !document.hidden, []);
 
   const listen = useCallback((fn: (event: LiveEvent) => void) => {
     listeners.current.add(fn);
@@ -120,13 +126,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       reload,
       setActive,
       markRead,
+      isReading,
       listen,
       commandOpen,
       setCommandOpen,
       dialog,
       setDialog,
     };
-  }, [state, error, reload, setActive, markRead, listen, commandOpen, dialog]);
+  }, [state, error, reload, setActive, markRead, isReading, listen, commandOpen, dialog]);
 
   if (!store) {
     return error ? (

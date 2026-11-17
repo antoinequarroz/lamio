@@ -1,9 +1,10 @@
 "use client";
 
-import { LogOut, Monitor, Moon, Sun } from "lucide-react";
+import { Bell, BellOff, LogOut, Monitor, Moon, Sun } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Avatar, Button, Card, Field, inputClass, PageHeader } from "@/components/ui";
+import { setNotifications, useNotificationState } from "@/lib/notifications";
 import { useApp } from "@/lib/store";
 import { setTheme, type Theme, useTheme } from "@/lib/theme";
 import { api, cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ export default function SettingsPage() {
         <div className="mx-auto flex max-w-[560px] flex-col gap-4">
           <Profile />
           <Appearance />
+          <Notifications />
           <Password />
           {me.role === "admin" && <Members />}
           <Session />
@@ -93,6 +95,38 @@ function Appearance() {
           </button>
         ))}
       </div>
+    </Card>
+  );
+}
+
+function Notifications() {
+  const state = useNotificationState();
+  const toggle = async () => {
+    const next = await setNotifications(state !== "on");
+    if (next === "on") toast("Notifications activées sur cet appareil");
+    else if (next === "blocked") toast.error("Ton navigateur bloque les notifications pour ce site", { description: "Autorise-les dans les réglages du site, puis réessaie." });
+  };
+  return (
+    <Card className="flex items-center gap-3">
+      <div className="min-w-0 flex-1">
+        <Title
+          hint={
+            state === "unsupported"
+              ? "Ce navigateur ne sait pas afficher de notifications."
+              : state === "blocked"
+                ? "Ton navigateur les bloque pour ce site. Autorise-les dans les réglages du site."
+                : "Quand on te mentionne ou qu'on t'écrit en privé et que l'app n'est pas à l'écran. Dans l'app, un message s'affiche toujours."
+          }
+        >
+          Notifications
+        </Title>
+      </div>
+      {(state === "on" || state === "off") && (
+        <Button onClick={toggle} variant={state === "on" ? "secondary" : "primary"}>
+          {state === "on" ? <BellOff className="size-4" /> : <Bell className="size-4" />}
+          {state === "on" ? "Désactiver" : "Activer"}
+        </Button>
+      )}
     </Card>
   );
 }

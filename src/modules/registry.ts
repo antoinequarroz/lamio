@@ -1,15 +1,18 @@
 import type { ModuleInfo } from "@/lib/types";
 
 /**
- * The modules of the suite. Cordée is the base: every other tool plugs in here.
+ * The modules of the suite. This app is the base: every other tool plugs in here.
  *
  * Three levels, as in the roadmap:
  *  - "core"   : built into this app (the messaging).
- *  - "linked" : the tool runs at its own address and Cordée opens it (set its URL in .env).
+ *  - "linked" : the tool runs at its own address and this app opens it (set its URL in .env).
  *  - "soon"   : planned, not plugged in yet.
  *
  * To add a module: add an entry here. To plug an existing tool: give its URL in the
- * environment variable named in `env`.
+ * environment variable named in `env` (CAIRN_URL).
+ *
+ * Single sign-on: give the tool a shared secret as well (CAIRN_SSO_SECRET here, LAMIO_SSO_SECRET
+ * in the tool). The tool then offers "Se connecter avec Lamio", see src/server/sso.ts.
  */
 type ModuleDef = Omit<ModuleInfo, "status" | "url"> & { core?: boolean; env?: string };
 
@@ -57,11 +60,26 @@ const MODULES: ModuleDef[] = [
   },
 ];
 
-const validUrl = (value: string | undefined) => (value && /^https?:\/\//.test(value) ? value : undefined);
+const validUrl = (value: string | undefined) => (value && /^https?:\/\//.test(value) ? value.replace(/\/+$/, "") : undefined);
+
+/** A secret too short to be one is treated as missing. */
+export const MIN_SSO_SECRET = 32;
+const secretKey = (urlKey: string) => urlKey.replace(/_URL$/, "_SSO_SECRET");
+
 
 export function listModules(env: Record<string, string | undefined> = process.env): ModuleInfo[] {
   return MODULES.map(({ core, env: key, ...m }) => {
     const url = key ? validUrl(env[key]) : undefined;
-    return { ...m, status: core ? "core" : url ? "linked" : "soon", url };
+    const sso = !!url && !!key && (env[secretKey(key)]?.length ?? 0) >= MIN_SSO_SECRET;
+    return { ...m, status: core ? "core" : url ? "linked" : "soon", url, ...(sso && { sso }) };
   });
+}
+
+/** A tool that signs people in with this app: its name in the protocol is its env prefix in lower case ("cairn"). */
+export function ssoClient(client: string, env: Record<string, string | undefined> = process.env) {
+  const def = MODULES.find((m) => m.env && m.env.replace(/_URL$/, "").toLowerCase() === client);
+  if (!def?.env) return null;
+  const url = validUrl(env[def.env]);
+  const secret = env[secretKey(def.env)] ?? "";
+  return url && secret.length >= MIN_SSO_SECRET ? { id: def.id, name: def.name, url, secret } : null;
 }
