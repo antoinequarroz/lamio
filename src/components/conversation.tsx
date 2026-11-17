@@ -1,19 +1,27 @@
 "use client";
 
-import { ArrowLeft, Download, FileIcon, Hash, Trash2 } from "lucide-react";
+import { ArrowLeft, Hash, Lock, Users, X } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApp } from "@/lib/store";
 import type { Message } from "@/lib/types";
-import { api, clock, cn, dayLabel, fileSize } from "@/lib/utils";
+import { api, cn, dayLabel } from "@/lib/utils";
 import { Composer } from "./composer";
+import { MembersDialog } from "./dialogs";
+import { MessageItem } from "./message";
 import { Avatar, Button } from "./ui";
 
 type Page = { messages: Message[]; hasMore: boolean };
 
 const GROUP_MS = 5 * 60_000;
-const INLINE = /^image\/(png|jpeg|gif|webp|avif)$/;
+
+const replace = (list: Message[] | null, m: Message) => list?.map((x) => (x.id === m.id ? m : x)) ?? list;
+const append = (list: Message[] | null, m: Message) => (list && !list.some((x) => x.id === m.id) ? [...list, m] : list);
+const without = (list: Message[] | null, id: number) => list?.filter((x) => x.id !== id) ?? list;
+
+const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Date(b).toDateString();
+const follows = (prev: Message | undefined, m: Message) => !!prev && sameDay(prev.createdAt, m.createdAt) && prev.userId === m.userId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
 
 export function ConversationView({ id }: { id: string }) {
   const { conversations, userById, titleOf, users, me, setActive, markRead, listen } = useApp();
@@ -21,6 +29,9 @@ export function ConversationView({ id }: { id: string }) {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState("");
+  /** The thread open in the side panel: the id of the message that started it. */
+  const [threadId, setThreadId] = useState<number | null>(null);
+  const [membersOpen, setMembersOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   /** Stay glued to the newest message unless the reader scrolled up. */
   const stick = useRef(true);
@@ -40,6 +51,7 @@ export function ConversationView({ id }: { id: string }) {
 
   useEffect(() => {
     setMessages(null);
+    setThreadId(null);
     stick.current = true;
     load();
   }, [load]);
@@ -53,21 +65,29 @@ export function ConversationView({ id }: { id: string }) {
     () =>
       listen((event) => {
         if (event.type === "resync") load();
-        else if (event.type === "message" && event.message.conversationId === id) setMessages((list) => (list && !list.some((m) => m.id === event.message.id) ? [...list, event.message] : list));
-        else if (event.type === "message-deleted" && event.conversationId === id) setMessages((list) => list?.filter((m) => m.id !== event.id) ?? list);
+        else if (event.type === "message" && event.message.conversationId === id) {
+          // Replies live in their thread; the message that started it gets its own update.
+          if (!event.message.parentId) setMessages((list) => append(list, event.message));
+        } else if (event.type === "message-updated" && event.message.conversationId === id) setMessages((list) => replace(list, event.message));
+        else if (event.type === "message-deleted" && event.conversationId === id) {
+          setMessages((list) => without(list, event.id));
+          setThreadId((open) => (open === event.id ? null : open));
+        }
       }),
     [id, listen, load],
   );
 
-  // Reading: whatever is on screen while the tab is visible counts as read.
-  const lastId = messages?.at(-1)?.id ?? 0;
+  // Reading: whatever is on screen while the tab is visible counts as read. Replies count too,
+  // so the newest id comes from the conversation, not only from the messages listed here.
+  const lastId = Math.max(messages?.at(-1)?.id ?? 0, conversation?.lastMessageId ?? 0);
+  const ready = messages !== null;
   useEffect(() => {
-    if (!messages) return;
+    if (!ready) return;
     const read = () => !document.hidden && markRead(id, lastId);
     read();
     document.addEventListener("visibilitychange", read);
     return () => document.removeEventListener("visibilitychange", read);
-  }, [id, lastId, messages, markRead]);
+  }, [id, lastId, ready, markRead]);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -80,6 +100,10 @@ export function ConversationView({ id }: { id: string }) {
     }
   }, [messages]);
 
+  // Stable, so the thread panel does not reload each time this view renders.
+  const closeThread = useCallback(() => setThreadId(null), []);
+  const parentChanged = useCallback((m: Message) => setMessages((list) => replace(list, m)), []);
+
   const loadOlder = async () => {
     if (!messages?.length) return;
     try {
@@ -87,16 +111,6 @@ export function ConversationView({ id }: { id: string }) {
       prepend.current = scroller.current ? scroller.current.scrollHeight - scroller.current.scrollTop : null;
       setMessages((list) => [...page.messages, ...(list ?? [])]);
       setHasMore(page.hasMore);
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
-
-  const remove = async (m: Message) => {
-    if (!window.confirm("Supprimer ce message ?")) return;
-    try {
-      await api(`/api/messages/${m.id}`, { method: "DELETE" });
-      setMessages((list) => list?.filter((x) => x.id !== m.id) ?? list);
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -116,25 +130,178 @@ export function ConversationView({ id }: { id: string }) {
   const other = userById(conversation.otherUserId);
   const title = titleOf(conversation);
   const isChannel = conversation.kind === "channel";
-  const subtitle = isChannel ? conversation.topic || `${users.length} ${users.length > 1 ? "membres" : "membre"}` : other?.id === me.id ? "Ton espace à toi : notes, liens, fichiers" : (other?.email ?? "");
+  const count = conversation.private ? (conversation.memberIds?.length ?? 0) : users.length;
+  const people = `${count} ${count > 1 ? "membres" : "membre"}`;
+  const subtitle = isChannel ? conversation.topic || (conversation.private ? "Canal privé" : people) : other?.id === me.id ? "Ton espace à toi : notes, liens, fichiers" : (other?.email ?? "");
+  const ChannelIcon = conversation.private ? Lock : Hash;
 
   return (
-    <>
-      <header className="flex items-center gap-3 border-b border-line px-7 py-4 max-md:px-3 max-md:py-2.5">
-        <Link href="/c" aria-label="Retour" className="-ml-1 flex size-9 items-center justify-center rounded-lg text-ink-2 md:hidden">
-          <ArrowLeft className="size-[18px]" />
-        </Link>
-        {isChannel ? (
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent max-md:hidden">
-            <Hash className="size-[18px]" strokeWidth={2.2} />
-          </span>
-        ) : (
-          <Avatar id={other?.id ?? id} name={other?.name ?? "?"} size="lg" />
-        )}
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate font-display text-[24px] leading-none">{isChannel ? conversation.name : title}</h1>
-          <p className="mt-1 truncate text-[12.5px] text-ink-3">{subtitle}</p>
+    <div className="flex min-h-0 flex-1">
+      <section className={cn("flex min-w-0 flex-1 flex-col", threadId !== null && "max-lg:hidden")}>
+        <header className="flex items-center gap-3 border-b border-line px-7 py-4 max-md:px-3 max-md:py-2.5">
+          <Link href="/c" aria-label="Retour" className="-ml-1 flex size-9 items-center justify-center rounded-lg text-ink-2 md:hidden">
+            <ArrowLeft className="size-[18px]" />
+          </Link>
+          {isChannel ? (
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent max-md:hidden">
+              <ChannelIcon className="size-[18px]" strokeWidth={2.2} />
+            </span>
+          ) : (
+            <Avatar id={other?.id ?? id} name={other?.name ?? "?"} size="lg" />
+          )}
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate font-display text-[24px] leading-none">{isChannel ? conversation.name : title}</h1>
+            <p className="mt-1 truncate text-[12.5px] text-ink-3">{subtitle}</p>
+          </div>
+          {conversation.private && (
+            <Button size="sm" onClick={() => setMembersOpen(true)} aria-label={`Membres : ${people}`}>
+              <Users className="size-3.5" />
+              {count}
+            </Button>
+          )}
+        </header>
+
+        <div
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+          className="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto px-7 py-4 max-md:px-3"
+        >
+          {error && !messages ? (
+            <p className="m-auto text-[13px] text-ink-3">{error}</p>
+          ) : !messages ? null : (
+            <>
+              {hasMore ? (
+                <Button size="sm" className="mx-auto mb-3 shrink-0" onClick={loadOlder}>
+                  Messages précédents
+                </Button>
+              ) : (
+                <div className="mt-auto pb-5 pt-8">
+                  <h2 className="font-display text-[30px] leading-tight">{isChannel ? `Bienvenue dans #${conversation.name}` : title}</h2>
+                  <p className="mt-1 max-w-[60ch] text-[13.5px] text-ink-3">
+                    {isChannel
+                      ? conversation.topic || (conversation.private ? "Ce canal est privé : seuls ses membres le voient." : "C'est le tout début de ce canal.")
+                      : other?.id === me.id
+                        ? "Écris-toi ici : c'est pratique pour garder un lien, un fichier ou une idée."
+                        : `C'est le début de ta conversation avec ${other?.name ?? "cette personne"}.`}
+                  </p>
+                </div>
+              )}
+              {messages.map((m, i) => {
+                const prev = messages[i - 1];
+                return (
+                  <Fragment key={m.id}>
+                    {(!prev || !sameDay(prev.createdAt, m.createdAt)) && (
+                      <div className="my-3 flex shrink-0 items-center gap-3 text-[11.5px] font-medium text-ink-3">
+                        <span className="h-px flex-1 bg-line" />
+                        <span className="first-letter:uppercase">{dayLabel(m.createdAt)}</span>
+                        <span className="h-px flex-1 bg-line" />
+                      </div>
+                    )}
+                    <MessageItem
+                      message={m}
+                      grouped={follows(prev, m)}
+                      onOpenThread={(x) => setThreadId(x.id)}
+                      onChange={(x) => setMessages((list) => replace(list, x))}
+                      onRemove={(x) => {
+                        setMessages((list) => without(list, x.id));
+                        setThreadId((open) => (open === x.id ? null : open));
+                      }}
+                    />
+                  </Fragment>
+                );
+              })}
+            </>
+          )}
         </div>
+
+        <Composer
+          conversationId={id}
+          placeholder={isChannel ? `Écrire dans #${conversation.name}` : other?.id === me.id ? "Une note pour toi" : `Écrire à ${other?.name ?? ""}`}
+          onSent={(m) => {
+            stick.current = true;
+            setMessages((list) => append(list, m));
+          }}
+        />
+      </section>
+
+      {threadId !== null && <ThreadPanel key={threadId} conversationId={id} parentId={threadId} where={isChannel ? `#${conversation.name}` : title} onClose={closeThread} onParentChange={parentChanged} />}
+      {membersOpen && conversation.private && <MembersDialog conversation={conversation} onClose={() => setMembersOpen(false)} />}
+    </div>
+  );
+}
+
+type ThreadProps = { conversationId: string; parentId: number; where: string; onClose: () => void; onParentChange: (m: Message) => void };
+
+/** A thread: the message that started it, then its replies. Beside the conversation, or instead of it on a small screen. */
+function ThreadPanel({ conversationId, parentId, where, onClose, onParentChange }: ThreadProps) {
+  const { listen } = useApp();
+  const [parent, setParent] = useState<Message | null>(null);
+  const [replies, setReplies] = useState<Message[] | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+
+  const load = useCallback(async () => {
+    try {
+      const thread = await api<{ parent: Message; replies: Message[] }>(`/api/messages/${parentId}/thread`);
+      setParent(thread.parent);
+      setReplies(thread.replies);
+    } catch (e) {
+      toast.error((e as Error).message);
+      onClose();
+    }
+  }, [parentId, onClose]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(
+    () =>
+      listen((event) => {
+        if (event.type === "resync") load();
+        else if (event.type === "message" && event.message.parentId === parentId) setReplies((list) => append(list, event.message));
+        else if (event.type === "message-updated") {
+          if (event.message.id === parentId) setParent(event.message);
+          else if (event.message.parentId === parentId) setReplies((list) => replace(list, event.message));
+        } else if (event.type === "message-deleted" && event.parentId === parentId) setReplies((list) => without(list, event.id));
+      }),
+    [parentId, listen, load],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !(e.target as HTMLElement).closest("textarea, input") && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [replies]);
+
+  const changed = (m: Message) => {
+    if (m.id === parentId) {
+      setParent(m);
+      onParentChange(m);
+    } else setReplies((list) => replace(list, m));
+  };
+
+  return (
+    <aside aria-label="Fil de réponses" className="flex w-[400px] shrink-0 flex-col border-l border-line bg-surface/50 max-lg:w-auto max-lg:flex-1 max-lg:border-l-0">
+      <header className="flex items-center gap-2 border-b border-line py-4 pr-3 pl-5 max-md:py-2.5 max-md:pl-3">
+        <button onClick={onClose} aria-label="Retour à la conversation" className="-ml-1 flex size-9 items-center justify-center rounded-lg text-ink-2 lg:hidden">
+          <ArrowLeft className="size-[18px]" />
+        </button>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-display text-[24px] leading-none">Fil</h2>
+          <p className="mt-1 truncate text-[12.5px] text-ink-3">{where}</p>
+        </div>
+        <button onClick={onClose} aria-label="Fermer le fil" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/5 hover:text-ink max-lg:hidden">
+          <X className="size-4" />
+        </button>
       </header>
 
       <div
@@ -143,115 +310,32 @@ export function ConversationView({ id }: { id: string }) {
           const el = e.currentTarget;
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
-        className="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto px-7 py-4 max-md:px-3"
+        className="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4 max-md:px-3"
       >
-        {error && !messages ? (
-          <p className="m-auto text-[13px] text-ink-3">{error}</p>
-        ) : !messages ? null : (
+        {parent && replies && (
           <>
-            {hasMore ? (
-              <Button size="sm" className="mx-auto mb-3 shrink-0" onClick={loadOlder}>
-                Messages précédents
-              </Button>
-            ) : (
-              <div className="mt-auto pb-5 pt-8">
-                <h2 className="font-display text-[30px] leading-tight">{isChannel ? `Bienvenue dans #${conversation.name}` : title}</h2>
-                <p className="mt-1 max-w-[60ch] text-[13.5px] text-ink-3">
-                  {isChannel ? conversation.topic || "C'est le tout début de ce canal." : other?.id === me.id ? "Écris-toi ici : c'est pratique pour garder un lien, un fichier ou une idée." : `C'est le début de ta conversation avec ${other?.name ?? "cette personne"}.`}
-                </p>
-              </div>
-            )}
-            {messages.map((m, i) => {
-              const prev = messages[i - 1];
-              const newDay = !prev || new Date(prev.createdAt).toDateString() !== new Date(m.createdAt).toDateString();
-              const grouped = !newDay && prev.userId === m.userId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
-              const author = userById(m.userId);
-              return (
-                <Fragment key={m.id}>
-                  {newDay && (
-                    <div className="my-3 flex shrink-0 items-center gap-3 text-[11.5px] font-medium text-ink-3">
-                      <span className="h-px flex-1 bg-line" />
-                      <span className="first-letter:uppercase">{dayLabel(m.createdAt)}</span>
-                      <span className="h-px flex-1 bg-line" />
-                    </div>
-                  )}
-                  <div className={cn("group relative -mx-2 flex shrink-0 gap-3 rounded-lg px-2 py-0.5 hover:bg-ink/[0.03]", !grouped && "mt-2.5")}>
-                    {grouped ? (
-                      <span className="tabular w-8 shrink-0 pt-[3px] text-right text-[10.5px] text-ink-3 opacity-0 group-hover:opacity-100">{clock(m.createdAt)}</span>
-                    ) : (
-                      <Avatar id={m.userId} name={author?.name ?? "?"} className="mt-0.5" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      {!grouped && (
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-[13.5px] font-semibold">{author?.name ?? "Ancien membre"}</span>
-                          <span className="tabular text-[11.5px] text-ink-3">{clock(m.createdAt)}</span>
-                        </div>
-                      )}
-                      {m.body && <p className="whitespace-pre-wrap text-[14.5px] leading-[1.5] [overflow-wrap:anywhere]">{linkify(m.body)}</p>}
-                      {m.files.length > 0 && (
-                        <div className="mt-1.5 mb-1 flex flex-wrap gap-2">
-                          {m.files.map((f) =>
-                            INLINE.test(f.mime) ? (
-                              <a key={f.id} href={`/api/files/${f.id}`} target="_blank" rel="noreferrer" title={f.name}>
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={`/api/files/${f.id}`} alt={f.name} loading="lazy" className="max-h-[280px] max-w-full rounded-xl border border-line" />
-                              </a>
-                            ) : (
-                              <a key={f.id} href={`/api/files/${f.id}`} className="press flex max-w-full items-center gap-2.5 rounded-xl border border-line-strong bg-surface py-2 pr-3 pl-2.5 shadow-card hover:bg-surface-2">
-                                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
-                                  <FileIcon className="size-4" />
-                                </span>
-                                <span className="min-w-0">
-                                  <span className="block truncate text-[13px] font-medium leading-tight">{f.name}</span>
-                                  <span className="block text-[11.5px] leading-tight text-ink-3">{fileSize(f.size)}</span>
-                                </span>
-                                <Download className="ml-1 size-4 shrink-0 text-ink-3" />
-                              </a>
-                            ),
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {(m.userId === me.id || me.role === "admin") && (
-                      <button
-                        onClick={() => remove(m)}
-                        aria-label="Supprimer le message"
-                        title="Supprimer"
-                        className="press absolute -top-3 right-2 flex size-7 items-center justify-center rounded-lg border border-line-strong bg-surface text-ink-3 opacity-0 shadow-card hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </Fragment>
-              );
-            })}
+            <MessageItem message={parent} inThread onChange={changed} onRemove={onClose} />
+            <div className="my-3 flex shrink-0 items-center gap-3 text-[11.5px] font-medium text-ink-3">
+              <span>{replies.length ? `${replies.length} ${replies.length > 1 ? "réponses" : "réponse"}` : "Pas encore de réponse"}</span>
+              <span className="h-px flex-1 bg-line" />
+            </div>
+            {replies.map((m, i) => (
+              <MessageItem key={m.id} message={m} grouped={follows(replies[i - 1], m)} inThread onChange={changed} onRemove={(x) => setReplies((list) => without(list, x.id))} />
+            ))}
           </>
         )}
       </div>
 
       <Composer
-        conversationId={id}
-        placeholder={isChannel ? `Écrire dans #${conversation.name}` : other?.id === me.id ? "Une note pour toi" : `Écrire à ${other?.name ?? ""}`}
+        conversationId={conversationId}
+        parentId={parentId}
+        compact
+        placeholder="Répondre dans le fil"
         onSent={(m) => {
           stick.current = true;
-          setMessages((list) => (list && !list.some((x) => x.id === m.id) ? [...list, m] : list));
+          setReplies((list) => append(list, m));
         }}
       />
-    </>
-  );
-}
-
-/** Plain text, with web addresses turned into links. */
-function linkify(text: string) {
-  return text.split(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g).map((part, i) =>
-    i % 2 ? (
-      <a key={i} href={part} target="_blank" rel="noreferrer noopener" className="text-accent underline decoration-accent/40 underline-offset-[3px]">
-        {part}
-      </a>
-    ) : (
-      part
-    ),
+    </aside>
   );
 }

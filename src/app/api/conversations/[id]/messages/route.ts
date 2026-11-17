@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/server/auth";
-import { accessTo, addMessage, audienceOf, listMessages } from "@/server/db";
+import { accessTo, addMessage, audienceOf, getMessage, listMessages } from "@/server/db";
 import { publish } from "@/server/events";
 import { body, fail, MAX_FILES_PER_MESSAGE, MAX_MESSAGE, unauthorized } from "@/server/http";
 
@@ -29,8 +29,15 @@ export async function POST(req: Request, { params }: Params) {
   if (text.length > MAX_MESSAGE) return fail("Message trop long");
   if (!text && !fileIds.length) return fail("Message vide");
 
-  const message = addMessage({ conversationId: id, userId: me.id, body: text, fileIds });
-  if (!message) return fail("Message vide");
-  publish({ type: "message", message }, audienceOf(id));
+  const parentId = data.parentId === undefined || data.parentId === null ? undefined : Number(data.parentId);
+  if (parentId !== undefined && !Number.isInteger(parentId)) return fail("Fil introuvable", 404);
+
+  const message = addMessage({ conversationId: id, userId: me.id, body: text, fileIds, parentId });
+  if (!message) return fail(parentId !== undefined && (text || fileIds.length) ? "Fil introuvable" : "Message vide", parentId !== undefined ? 404 : 400);
+  const audience = audienceOf(id);
+  publish({ type: "message", message }, audience);
+  // The message that started the thread shows one reply more.
+  const parent = message.parentId ? getMessage(message.parentId) : null;
+  if (parent) publish({ type: "message-updated", message: parent }, audience);
   return NextResponse.json(message);
 }

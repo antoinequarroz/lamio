@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/logo";
 import { Button, inputClass } from "@/components/ui";
-import { api } from "@/lib/utils";
+import { api, APP_NAME } from "@/lib/utils";
 
 export default function LoginPage() {
   /** No account yet: the first person to arrive creates theirs and becomes admin. */
@@ -40,7 +40,7 @@ export default function LoginPage() {
     <div className="flex min-h-dvh items-center justify-center p-4">
       <form onSubmit={submit} className="rise w-full max-w-[360px] rounded-2xl border border-line bg-surface/80 p-7 shadow-card backdrop-blur-xl">
         <Logo className="size-9" />
-        <h1 className="mt-5 font-display text-[30px] leading-none">Cordée</h1>
+        <h1 className="mt-5 font-display text-[30px] leading-none">{APP_NAME}</h1>
         <p className="mt-2 text-[13px] text-ink-3">{setup ? "Bienvenue. Crée ton compte : ce sera celui de l'administrateur." : "Connecte-toi pour retrouver ton équipe."}</p>
         <div className="mt-6 flex flex-col gap-2.5">
           {setup && <input autoFocus autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ton nom" maxLength={80} className={inputClass} />}

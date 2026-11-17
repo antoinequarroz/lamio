@@ -1,11 +1,11 @@
 import type { ModuleInfo } from "@/lib/types";
 
 /**
- * The modules of the suite. Cordée is the base: every other tool plugs in here.
+ * The modules of the suite. This app is the base: every other tool plugs in here.
  *
  * Three levels, as in the roadmap:
  *  - "core"   : built into this app (the messaging).
- *  - "linked" : the tool runs at its own address and Cordée opens it (set its URL in .env).
+ *  - "linked" : the tool runs at its own address and this app opens it (set its URL in .env).
  *  - "soon"   : planned, not plugged in yet.
  *
  * To add a module: add an entry here. To plug an existing tool: give its URL in the

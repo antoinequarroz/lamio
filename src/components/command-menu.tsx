@@ -1,7 +1,7 @@
 "use client";
 
 import { Command } from "cmdk";
-import { Hash, LayoutGrid, Plus, Settings, SquarePen, User } from "lucide-react";
+import { Hash, LayoutGrid, Lock, Plus, Settings, SquarePen, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useApp } from "@/lib/store";
 import { api } from "@/lib/utils";
@@ -36,7 +36,7 @@ export function CommandMenu() {
           {conversations
             .filter((c) => c.kind === "channel")
             .map((c) => (
-              <Item key={c.id} value={`canal ${c.name} ${c.topic} ${c.id}`} onSelect={() => run(() => router.push(`/c/${c.id}`))} icon={<Hash className="size-4" />}>
+              <Item key={c.id} value={`canal ${c.name} ${c.topic} ${c.id}`} onSelect={() => run(() => router.push(`/c/${c.id}`))} icon={c.private ? <Lock className="size-4" /> : <Hash className="size-4" />}>
                 <span className="min-w-0 flex-1 truncate">{c.name}</span>
                 {c.topic && <span className="max-w-[45%] shrink-0 truncate text-[11.5px] text-ink-3">{c.topic}</span>}
               </Item>

@@ -9,7 +9,17 @@ import { primaryClass } from "./ui";
 
 type Pending = { key: string; name: string; size: number; file?: FileInfo };
 
-export function Composer({ conversationId, placeholder, onSent }: { conversationId: string; placeholder: string; onSent: (m: Message) => void }) {
+type Props = {
+  conversationId: string;
+  /** Set to reply in a thread. */
+  parentId?: number;
+  placeholder: string;
+  onSent: (m: Message) => void;
+  /** Narrow version, for the thread panel. */
+  compact?: boolean;
+};
+
+export function Composer({ conversationId, parentId, placeholder, onSent, compact }: Props) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<Pending[]>([]);
   const [sending, setSending] = useState(false);
@@ -22,7 +32,7 @@ export function Composer({ conversationId, placeholder, onSent }: { conversation
     setPending([]);
     // Typing right away on a computer; on a phone this would pop the keyboard open.
     if (window.matchMedia("(min-width: 768px)").matches) area.current?.focus();
-  }, [conversationId]);
+  }, [conversationId, parentId]);
 
   // The field grows with the text, up to a few lines.
   useEffect(() => {
@@ -55,7 +65,7 @@ export function Composer({ conversationId, placeholder, onSent }: { conversation
     if (!canSend) return;
     setSending(true);
     try {
-      const message = await api<Message>(`/api/conversations/${conversationId}/messages`, { method: "POST", json: { body: text, fileIds: pending.map((p) => p.file!.id) } });
+      const message = await api<Message>(`/api/conversations/${conversationId}/messages`, { method: "POST", json: { body: text, fileIds: pending.map((p) => p.file!.id), parentId } });
       setText("");
       setPending([]);
       onSent(message);
@@ -68,7 +78,7 @@ export function Composer({ conversationId, placeholder, onSent }: { conversation
   };
 
   return (
-    <div className="px-7 pb-5 max-md:px-3 max-md:pb-3">
+    <div className={cn("pb-5 max-md:px-3 max-md:pb-3", compact ? "px-4" : "px-7")}>
       <div
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
@@ -127,8 +137,8 @@ export function Composer({ conversationId, placeholder, onSent }: { conversation
           <button onClick={() => picker.current?.click()} aria-label="Joindre un fichier" title="Joindre un fichier" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
             <Paperclip className="size-4" />
           </button>
-          <span className="ml-auto text-[11px] text-ink-3 max-md:hidden">Entrée pour envoyer, Maj + Entrée pour aller à la ligne</span>
-          <button onClick={send} disabled={!canSend} aria-label="Envoyer" className={cn("press ml-2 flex size-8 items-center justify-center rounded-lg disabled:pointer-events-none disabled:opacity-35 max-md:ml-auto", primaryClass)}>
+          {!compact && <span className="ml-auto text-[11px] text-ink-3 max-md:hidden">Entrée pour envoyer, Maj + Entrée pour aller à la ligne</span>}
+          <button onClick={send} disabled={!canSend} aria-label="Envoyer" className={cn("press ml-2 flex size-8 items-center justify-center rounded-lg disabled:pointer-events-none disabled:opacity-35 max-md:ml-auto", compact && "ml-auto", primaryClass)}>
             <ArrowUp className="size-4" strokeWidth={2.6} />
           </button>
         </div>

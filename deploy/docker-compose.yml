@@ -1,9 +1,9 @@
-# Cordée sur le VPS, à côté de Cairn et Metricove.
+# La base de la suite sur le VPS, à côté de Cairn et Metricove.
 #
-# Le Caddy déjà en place (celui de Metricove) occupe les ports 80 et 443 : Cordée passe par lui.
+# Le Caddy déjà en place (celui de Metricove) occupe les ports 80 et 443 : elle passe par lui.
 # Ajoute ce bloc à son Caddyfile, puis recharge-le :
 #
-#   cordee.antoinequarroz.ch {
+#   base.antoinequarroz.ch {
 #       encode zstd gzip
 #       header Strict-Transport-Security "max-age=31536000"
 #       request_body {
@@ -17,7 +17,7 @@
 #   cd deploy && docker compose up -d --build
 
 services:
-  cordee:
+  app:
     build: ..
     restart: unless-stopped
     env_file: ../.env
@@ -25,9 +25,9 @@ services:
       DATA_DIR: /data
       TZ: Europe/Zurich
     volumes:
-      - cordee-data:/data
+      - app-data:/data
     ports:
-      - "${CORDEE_BIND:-172.17.0.1}:${CORDEE_PORT:-3030}:3000"
+      - "${APP_BIND:-172.17.0.1}:${APP_PORT:-3030}:3000"
 
 volumes:
-  cordee-data:
+  app-data:

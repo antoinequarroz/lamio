@@ -1,5 +1,5 @@
 {
-  "name": "cordee",
+  "name": "suite-base",
   "version": "0.1.0",
   "private": true,
   "scripts": {

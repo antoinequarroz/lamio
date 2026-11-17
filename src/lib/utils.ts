@@ -1,6 +1,6 @@
 export { default as cn } from "clsx";
 
-export const APP_NAME = "Cordée";
+export { APP_NAME } from "./brand";
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 

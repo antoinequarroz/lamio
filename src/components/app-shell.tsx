@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Hash, LayoutGrid, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, Hash, LayoutGrid, Lock, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
@@ -170,7 +170,7 @@ export function ConversationList() {
         const active = pathname === `/c/${c.id}`;
         return (
           <Link key={c.id} href={`/c/${c.id}`} className={row(active, c.unread)}>
-            <Hash className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />
+            {c.private ? <Lock className={cn("size-4 shrink-0 p-px", active ? "text-accent" : "text-ink-3")} strokeWidth={2} /> : <Hash className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />}
             <span className="truncate">{c.name}</span>
             {c.unread > 0 && <Badge n={c.unread} />}
           </Link>
