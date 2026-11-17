@@ -8,7 +8,7 @@
 
 use tauri::{webview::NewWindowResponse, Url, WebviewUrl, WebviewWindowBuilder};
 
-const DEFAULT_URL: &str = "https://lamio.antoinequarroz.ch";
+const DEFAULT_URL: &str = "https://lamio.postmelo.ch";
 
 /// Chosen when the app is built, so a double-clicked app needs no settings.
 fn home() -> Url {

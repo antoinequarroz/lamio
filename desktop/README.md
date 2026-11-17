@@ -16,7 +16,7 @@ npm run build
 
 L'app est dans `src-tauri/target/release/bundle/macos/Lamio.app`, et l'image disque à partager dans `src-tauri/target/release/bundle/dmg/`. La première construction prend quelques minutes.
 
-Pour viser un autre serveur que https://lamio.antoinequarroz.ch :
+Pour viser un autre serveur que https://lamio.postmelo.ch :
 
 ```bash
 LAMIO_URL=https://lamio.exemple.ch npm run build

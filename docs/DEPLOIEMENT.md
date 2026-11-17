@@ -1,8 +1,10 @@
 # Mettre Lamio en ligne sur le VPS
 
-À la fin de ce guide : **https://lamio.antoinequarroz.ch**, avec ton compte d'administrateur, et Cairn et Metricove qui s'ouvrent avec ce compte.
+À la fin de ce guide : **https://lamio.postmelo.ch**, avec ton compte d'administrateur, et Cairn et Metricove qui s'ouvrent avec ce compte.
 
 Lamio est en ligne depuis le 17 novembre 2026. Ce guide décrit ce qui a été fait, pour le refaire ou le dépanner.
+
+Lamio a d'abord vécu sur `lamio.antoinequarroz.ch`. Cette adresse renvoie maintenant vers la nouvelle (voir « Ancienne adresse » plus bas).
 
 ## 0. Comment c'est branché
 
@@ -12,7 +14,7 @@ Lamio est en ligne depuis le 17 novembre 2026. Ce guide décrit ce qui a été f
 
 ## 1. DNS
 
-Un enregistrement **A** `lamio` vers l'IP du VPS, chez Infomaniak (il n'y a pas d'enregistrement générique). Pour vérifier : `dig +short lamio.antoinequarroz.ch`.
+Un enregistrement **A** `lamio` vers l'IP du VPS, dans la zone `postmelo.ch` chez Infomaniak (il n'y a pas d'enregistrement générique). Pour vérifier : `dig +short lamio.postmelo.ch`.
 
 ## 2. Installer Lamio
 
@@ -44,7 +46,7 @@ Le conteneur s'appelle `lamio`. Pour vérifier : `docker ps --filter name=lamio`
 Garde d'abord une copie du Caddyfile, puis ajoute ce bloc à la fin :
 
 ```caddy
-lamio.antoinequarroz.ch {
+lamio.postmelo.ch {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000"
@@ -72,9 +74,25 @@ docker exec antoinequarroz-caddy caddy reload --config /etc/caddy/Caddyfile
 
 Le certificat HTTPS arrive en moins d'une minute. Si la validation échoue, remets la copie.
 
+### Ancienne adresse
+
+Pour que les anciens liens continuent de marcher, `lamio.antoinequarroz.ch` renvoie pour de bon vers la nouvelle adresse, en gardant le chemin. Son enregistrement DNS reste en place, et son bloc dans le Caddyfile devient :
+
+```caddy
+lamio.antoinequarroz.ch {
+	redir https://lamio.postmelo.ch{uri} permanent
+}
+```
+
+À savoir après un changement d'adresse :
+
+- Chacun se reconnecte une fois : la session est liée à l'adresse.
+- L'app Mac se reconstruit (`cd desktop && npm run build`), car elle n'ouvre dans sa fenêtre que l'adresse choisie à la construction.
+- Dans le `.env` de chaque outil branché (Cairn, Metricove, TickUp), `LAMIO_URL` prend la nouvelle adresse. Les secrets ne changent pas.
+
 ## 4. Premier lancement
 
-1. Ouvre https://lamio.antoinequarroz.ch **tout de suite** et crée ton compte : la première personne qui arrive devient administratrice.
+1. Ouvre https://lamio.postmelo.ch **tout de suite** et crée ton compte : la première personne qui arrive devient administratrice.
 2. Dans **Réglages**, ajoute les membres.
 3. Sur Mac : Safari, Fichier, « Ajouter au Dock ». Sur iPhone : Partager, « Sur l'écran d'accueil ».
 
@@ -101,14 +119,14 @@ METRICOVE_SSO_SECRET=<le secret de Metricove>
 Dans `~/cairn/.env` :
 
 ```env
-LAMIO_URL=https://lamio.antoinequarroz.ch
+LAMIO_URL=https://lamio.postmelo.ch
 LAMIO_SSO_SECRET=<le secret de Cairn>
 ```
 
 Dans `~/metricove/.env` :
 
 ```env
-LAMIO_URL=https://lamio.antoinequarroz.ch
+LAMIO_URL=https://lamio.postmelo.ch
 LAMIO_SSO_SECRET=<le secret de Metricove>
 ```
 
