@@ -59,6 +59,12 @@ export type ModuleInfo = {
   href?: string;
   /** Where the tool lives when it is linked (its own address, for now). */
   url?: string;
+  /** The tool accepts the account of this app ("Se connecter avec Lamio"). */
+  sso?: boolean;
+  /** With single sign-on: whether I may open it. */
+  allowed?: boolean;
+  /** With single sign-on, for admins: the members who may open it. */
+  allowedIds?: string[];
 };
 
 export type AppState = { me: User; users: User[]; conversations: Conversation[]; modules: ModuleInfo[] };

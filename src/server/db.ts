@@ -97,6 +97,19 @@ export function db() {
       last_message_id integer not null,
       primary key (user_id, conversation_id)
     );
+    -- Single sign-on: a one-time code handed to a tool of the suite, which trades it for the person's identity.
+    create table if not exists sso_codes (
+      code_hash text primary key,
+      client text not null,
+      user_id text not null references users (id) on delete cascade,
+      expires_at text not null
+    );
+    -- Members allowed to open a tool with their account. Admins always may.
+    create table if not exists module_access (
+      module text not null,
+      user_id text not null references users (id) on delete cascade,
+      primary key (module, user_id)
+    );
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {
@@ -186,6 +199,36 @@ export function sessionUser(tokenHash: string): User | null {
 }
 
 export const removeSession = (tokenHash: string) => db().prepare("delete from sessions where token_hash = ?").run(tokenHash);
+
+// ---- Single sign-on
+
+export function addSsoCode(codeHash: string, client: string, userId: string, expiresAt: string) {
+  db().prepare("delete from sso_codes where expires_at < ?").run(now());
+  db().prepare("insert into sso_codes (code_hash, client, user_id, expires_at) values (?, ?, ?, ?)").run(codeHash, client, userId, expiresAt);
+}
+
+/** A code works once, for the tool it was issued to, before it expires. */
+export function takeSsoCode(codeHash: string, client: string): User | null {
+  const r = db().prepare("delete from sso_codes where code_hash = ? returning client, user_id, expires_at").get(codeHash) as { client: string; user_id: string; expires_at: string } | undefined;
+  if (!r || r.client !== client || r.expires_at <= now()) return null;
+  return getUser(r.user_id);
+}
+
+/** Who may open each tool, besides the admins. */
+export function moduleAccess(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const r of db().prepare("select module, user_id from module_access").all() as { module: string; user_id: string }[]) (out[r.module] ??= []).push(r.user_id);
+  return out;
+}
+
+export function mayOpenModule(module: string, user: { id: string; role: Role }) {
+  return user.role === "admin" || !!db().prepare("select 1 from module_access where module = ? and user_id = ?").get(module, user.id);
+}
+
+export function setModuleAccess(module: string, userId: string, allowed: boolean) {
+  if (allowed) db().prepare("insert or ignore into module_access (module, user_id) select ?, id from users where id = ?").run(module, userId);
+  else db().prepare("delete from module_access where module = ? and user_id = ?").run(module, userId);
+}
 
 // ---- Conversations
 
@@ -322,8 +365,8 @@ function hydrate(rows: MessageRow[]): Message[] {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.id);
   const marks = ids.map(() => "?").join(",");
-  const files = db().prepare(`select id, message_id, name, mime, size from files where message_id in (${marks}) order by created_at`).all(...ids) as (FileInfo & { message_id: number })[];
-  const reactions = db().prepare(`select message_id, emoji, user_id from reactions where message_id in (${marks}) order by created_at`).all(...ids) as { message_id: number; emoji: string; user_id: string }[];
+  const files = db().prepare(`select id, message_id, name, mime, size from files where message_id in (${marks}) order by created_at, rowid`).all(...ids) as (FileInfo & { message_id: number })[];
+  const reactions = db().prepare(`select message_id, emoji, user_id from reactions where message_id in (${marks}) order by created_at, rowid`).all(...ids) as { message_id: number; emoji: string; user_id: string }[];
   const mentions = db().prepare(`select message_id, user_id from mentions where message_id in (${marks})`).all(...ids) as { message_id: number; user_id: string }[];
   const threads = db().prepare(`select parent_id, count(*) as n, max(created_at) as last from messages where parent_id in (${marks}) group by parent_id`).all(...ids) as { parent_id: number; n: number; last: string }[];
   return rows.map((r) => {

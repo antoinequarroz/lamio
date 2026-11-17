@@ -23,6 +23,7 @@ Lamio fait partie de la même suite que [Cairn](https://github.com/antoinequarro
 - **En direct** : les messages arrivent sans recharger la page, avec les compteurs de non lus.
 - **Recherche ⌘K** : aller à un canal, une personne, une action, ou retrouver un message et y sauter.
 - **Modules** : la liste des outils de la suite, et ceux qui sont branchés.
+- **Une seule connexion** : Cairn et Metricove s'ouvrent avec le compte Lamio, sans autre mot de passe. Les administrateurs y entrent toujours, et choisissent module par module quels membres y ont accès.
 - **Clair et sombre** : comme l'appareil, ou forcé dans Réglages.
 - **Installable** comme une app sur Mac (Safari, « Ajouter au Dock ») et sur iPhone (« Sur l'écran d'accueil »).
 
@@ -50,6 +51,7 @@ Copier `.env.example` en `.env.local` (en local) ou `.env` (sur le VPS). Rien n'
 | `DATA_DIR` | Dossier de la base SQLite et des fichiers (`./data` par défaut). |
 | `MAX_FILE_MB` | Taille maximale d'un fichier joint (25 Mo par défaut). |
 | `CAIRN_URL`, `METRICOVE_URL`, `ALFRED_URL`, `NINO_URL` | Adresse d'un outil de la suite, pour le brancher. |
+| `CAIRN_SSO_SECRET`, `METRICOVE_SSO_SECRET`, … | Secret partagé avec l'outil (32 caractères au moins), pour y entrer avec son compte Lamio. |
 
 ## Les modules
 
@@ -59,7 +61,17 @@ Tout est dans [`src/modules/registry.ts`](src/modules/registry.ts) : une entrée
 2. **Branché** : l'outil tourne à son adresse, elle l'ouvre. Il suffit de donner son adresse dans `.env`.
 3. **Bientôt** : prévu, pas encore branché.
 
-Les étapes suivantes (une seule connexion pour tous les outils, puis des échanges de données entre eux) partiront de ce fichier.
+L'étape suivante (des échanges de données entre les outils) partira de ce fichier.
+
+### Une seule connexion
+
+Un outil branché peut faire confiance à Lamio pour savoir qui arrive. Il faut un secret partagé : `CAIRN_SSO_SECRET` ici, `LAMIO_SSO_SECRET` et `LAMIO_URL` dans l'outil. L'outil affiche alors « Se connecter avec Lamio ».
+
+1. L'outil envoie le navigateur vers `/sso/authorize?client=cairn&state=<aléatoire>`.
+2. Si la personne est connectée à Lamio et a le droit d'ouvrir cet outil, Lamio la renvoie vers `<adresse de l'outil>/api/auth/lamio?code=…&state=…`. Le code ne sert qu'une fois et vit une minute. L'adresse de retour est toujours celle du `.env`, jamais un paramètre.
+3. Le serveur de l'outil échange le code contre la personne : `POST /api/sso/token` avec `{ "client": "cairn", "code": "…" }` et le secret en `Authorization: Bearer`. Réponse : `{ "user": { "id", "name", "email", "role" } }`.
+
+Le détail est dans [`src/server/sso.ts`](src/server/sso.ts). Pour brancher un nouvel outil, le plus simple est de copier `src/server/lamio.ts` et `src/app/api/auth/lamio` depuis Cairn.
 
 ## Comment c'est fait
 
@@ -80,9 +92,8 @@ Next.js 15, React 19, Tailwind 4, SQLite (better-sqlite3). Un seul processus, un
 
 - Archiver ou supprimer un canal.
 - Notifications quand l'app est fermée.
-- Une seule connexion pour Lamio, Cairn et Metricove.
 - Apps Mac (Tauri) et iOS, à partir du même code.
 
 ## Déploiement
 
-`deploy/docker-compose.yml` lance Lamio sur le VPS derrière le Caddy déjà en place. Les données vivent dans le volume `app-data` (base et fichiers) : c'est lui qu'il faut sauvegarder.
+Le guide pas à pas est dans [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md) : mise en ligne sur le VPS derrière le Caddy déjà en place, connexion unique avec Cairn et Metricove, sauvegardes. Les données vivent dans le volume `app-data` (base et fichiers).

@@ -2,6 +2,22 @@ export { default as cn } from "clsx";
 
 export { APP_NAME } from "./brand";
 
+/** Where a tool of the suite starts and ends its sign-in with this app. */
+export const SSO_START_PATH = "/api/auth/lamio/start";
+export const SSO_CALLBACK_PATH = "/api/auth/lamio";
+
+/** Where "Ouvrir" leads for a linked tool: through the single sign-on when it has one. Undefined when it is not open to me. */
+export function moduleLink(m: { url?: string; sso?: boolean; allowed?: boolean }) {
+  if (!m.url) return undefined;
+  if (!m.sso) return m.url;
+  return m.allowed ? m.url + SSO_START_PATH : undefined;
+}
+
+/** The page to go back to after signing in: a path of this app, never another site. */
+export function safeNext(next: string | null) {
+  return next && /^\/(?![/\\])/.test(next) ? next : "/c";
+}
+
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 
 export function clock(iso: string) {

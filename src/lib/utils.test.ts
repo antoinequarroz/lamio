@@ -32,3 +32,11 @@ describe("modules", () => {
     expect(modules.find((m) => m.name === "Metricove")?.status).toBe("soon");
   });
 });
+
+describe("safeNext", () => {
+  it("ne renvoie que vers une page de l'app", async () => {
+    const { safeNext } = await import("./utils");
+    expect(safeNext("/sso/authorize?client=cairn&state=abc")).toBe("/sso/authorize?client=cairn&state=abc");
+    for (const bad of [null, "", "https://ailleurs.ch", "//ailleurs.ch", "/\\ailleurs.ch", "javascript:alert(1)"]) expect(safeNext(bad)).toBe("/c");
+  });
+});

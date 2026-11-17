@@ -9,7 +9,7 @@ import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
-import { APP_NAME, cn } from "@/lib/utils";
+import { APP_NAME, cn, moduleLink } from "@/lib/utils";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
 import { Logo } from "./logo";
@@ -67,7 +67,7 @@ function Sidebar() {
   const { me, conversations, modules, setCommandOpen, setDialog } = useApp();
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
   const mine = conversations.reduce((n, c) => n + forMe(c), 0);
-  const linked = modules.filter((m) => m.status === "linked");
+  const linked = modules.filter((m) => m.status === "linked" && moduleLink(m));
 
   return (
     <>
@@ -110,7 +110,7 @@ function Sidebar() {
           <>
             <SectionTitle>Suite</SectionTitle>
             {linked.map((m) => (
-              <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="group flex h-8 shrink-0 items-center gap-2.5 rounded-lg px-2 text-[13.5px] text-ink-2 transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink">
+              <a key={m.id} href={moduleLink(m)} target="_blank" rel="noreferrer" className="group flex h-8 shrink-0 items-center gap-2.5 rounded-lg px-2 text-[13.5px] text-ink-2 transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink">
                 <ModuleIcon icon={m.icon} className="size-4 text-ink-3" />
                 {m.name}
                 <ArrowUpRight className="ml-auto size-3.5 text-ink-3 opacity-0 transition-opacity group-hover:opacity-100" />

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/logo";
 import { Button, inputClass } from "@/components/ui";
-import { api, APP_NAME } from "@/lib/utils";
+import { api, APP_NAME, safeNext } from "@/lib/utils";
 
 export default function LoginPage() {
   /** No account yet: the first person to arrive creates theirs and becomes admin. */
@@ -27,7 +27,8 @@ export default function LoginPage() {
     setError("");
     try {
       await api(setup ? "/api/auth/setup" : "/api/auth/login", { method: "POST", json: { name, email, password } });
-      window.location.href = "/c";
+      // Coming from a tool of the suite ("Se connecter avec Lamio"): go on with that sign-in.
+      window.location.href = safeNext(new URLSearchParams(window.location.search).get("next"));
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);

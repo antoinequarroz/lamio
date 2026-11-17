@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { AppState } from "@/lib/types";
 import { listModules } from "@/modules/registry";
 import { currentUser } from "@/server/auth";
-import { listConversations, listUsers } from "@/server/db";
+import { listConversations, listUsers, moduleAccess } from "@/server/db";
 import { unauthorized } from "@/server/http";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,12 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const me = await currentUser();
   if (!me) return unauthorized();
-  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id, me.role), modules: listModules() };
+  const access = moduleAccess();
+  const modules = listModules().map((m) => {
+    if (!m.sso) return m;
+    const ids = access[m.id] ?? [];
+    return { ...m, allowed: me.role === "admin" || ids.includes(me.id), ...(me.role === "admin" && { allowedIds: ids }) };
+  });
+  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id, me.role), modules };
   return NextResponse.json(state);
 }

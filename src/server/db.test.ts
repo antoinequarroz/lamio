@@ -338,6 +338,38 @@ describe("recherche", () => {
   });
 });
 
+describe("connexion unique", () => {
+  const later = () => new Date(Date.now() + 60_000).toISOString();
+
+  it("un code ne sert qu'une fois, et seulement pour l'outil prévu", () => {
+    const { ana } = team();
+    store.addSsoCode("h1", "cairn", ana.id, later());
+    expect(store.takeSsoCode("h1", "metricove")).toBeNull();
+    expect(store.takeSsoCode("h1", "cairn")).toBeNull();
+    store.addSsoCode("h2", "cairn", ana.id, later());
+    expect(store.takeSsoCode("h2", "cairn")?.id).toBe(ana.id);
+    expect(store.takeSsoCode("h2", "cairn")).toBeNull();
+  });
+
+  it("un code expiré est refusé", () => {
+    const { ana } = team();
+    store.addSsoCode("h3", "cairn", ana.id, new Date(Date.now() - 1000).toISOString());
+    expect(store.takeSsoCode("h3", "cairn")).toBeNull();
+  });
+
+  it("un outil est ouvert aux administrateurs, et aux membres qu'on y ajoute", () => {
+    const { ana, bob } = team();
+    expect(store.mayOpenModule("notes", ana)).toBe(true);
+    expect(store.mayOpenModule("notes", bob)).toBe(false);
+    store.setModuleAccess("notes", bob.id, true);
+    expect(store.mayOpenModule("notes", bob)).toBe(true);
+    expect(store.mayOpenModule("publication", bob)).toBe(false);
+    expect(store.moduleAccess()).toEqual({ notes: [bob.id] });
+    store.setModuleAccess("notes", bob.id, false);
+    expect(store.mayOpenModule("notes", bob)).toBe(false);
+  });
+});
+
 describe("anciennes bases", () => {
   it("une base de la v0.1 reçoit les nouvelles colonnes sans perdre ses messages", async () => {
     const Database = (await import("better-sqlite3")).default;
