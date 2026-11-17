@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lamio</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #efede8; --ink: #171614; --ink-3: #6f6c66; --line: rgba(23, 22, 20, 0.16); --accent: #6f42e6; --accent-ink: #fff; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #0f0f0e; --ink: #f1efe9; --ink-3: #98958e; --line: rgba(255, 252, 245, 0.14); --accent: #a488ff; --accent-ink: #160f2e; } }
+      html, body { height: 100%; margin: 0; }
+      body { display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; -webkit-user-select: none; cursor: default; }
+      main { width: 320px; text-align: center; }
+      svg { width: 52px; height: 52px; }
+      h1 { margin: 18px 0 6px; font: 400 28px/1 "Iowan Old Style", "Palatino", Georgia, serif; }
+      p { margin: 0; color: var(--ink-3); }
+      #detail { margin-top: 4px; font-size: 12.5px; }
+      button { margin-top: 20px; height: 36px; padding: 0 16px; border: 0; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 500 13.5px/1 inherit; }
+      button:active { filter: brightness(0.94); }
+      [hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#181715" /><path d="M7.4 20.2 14 14.6l6.6-6.4" fill="none" stroke="#efede8" stroke-width="1.7" stroke-linecap="round" opacity=".45" /><circle cx="7.4" cy="20.2" r="2.9" fill="#efede8" opacity=".6" /><circle cx="14" cy="14.4" r="2.9" fill="#efede8" opacity=".85" /><circle cx="20.6" cy="8.2" r="3.1" fill="#8f6bff" /></svg>
+      <h1>Lamio</h1>
+      <p id="status">Connexion…</p>
+      <p id="detail" hidden></p>
+      <button id="retry" hidden>Réessayer</button>
+    </main>
+    <script>
+      // The app itself holds only this page: it waits for the Lamio server, then hands the window over to it.
+      const home = window.__LAMIO_URL__ || "https://lamio.antoinequarroz.ch";
+      const status = document.getElementById("status");
+      const detail = document.getElementById("detail");
+      const retry = document.getElementById("retry");
+      let timer;
+
+      async function connect() {
+        clearTimeout(timer);
+        retry.hidden = true;
+        detail.hidden = true;
+        status.textContent = "Connexion…";
+        try {
+          // "no-cors": the answer can't be read, but the request only succeeds if the server is there.
+          await fetch(new URL("/api/auth/status", home), { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(8000) });
+          window.location.replace(home);
+        } catch {
+          status.textContent = "Lamio est injoignable.";
+          detail.textContent = "Vérifie ta connexion. Nouvel essai dans quelques secondes (" + new URL(home).host + ").";
+          detail.hidden = false;
+          retry.hidden = false;
+          timer = setTimeout(connect, 6000);
+        }
+      }
+
+      retry.addEventListener("click", connect);
+      window.addEventListener("online", connect);
+      connect();
+    </script>
+  </body>
+</html>

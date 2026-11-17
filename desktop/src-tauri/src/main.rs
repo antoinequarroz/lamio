@@ -1,7 +1,9 @@
 // Lamio pour Mac : une fenêtre qui ouvre le Lamio en ligne.
 //
-// Rien de l'app n'est embarqué : la fenêtre charge l'adresse ci-dessous, donc une mise à jour du
-// serveur met à jour l'app. Pour viser un autre serveur : LAMIO_URL=https://… pnpm build
+// L'app n'embarque qu'une page d'attente (ui/index.html) : elle vérifie que le serveur répond, puis
+// lui passe la fenêtre. Une mise à jour du serveur met donc à jour l'app. Si le serveur est
+// injoignable, la page le dit et réessaie, au lieu de laisser une fenêtre blanche.
+// Pour viser un autre serveur : LAMIO_URL=https://… npm run build
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{webview::NewWindowResponse, Url, WebviewUrl, WebviewWindowBuilder};
@@ -27,8 +29,10 @@ fn main() {
         .setup(|app| {
             let home = home();
             let host = home.host_str().map(str::to_owned);
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(home))
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Lamio")
+                // Tells the waiting page which server to reach.
+                .initialization_script(format!("window.__LAMIO_URL__ = {:?};", home.as_str()))
                 .inner_size(1240.0, 820.0)
                 .min_inner_size(420.0, 560.0)
                 // Links that ask for a new tab (Cairn, Metricove, a link in a message) go to the browser.
@@ -38,7 +42,8 @@ fn main() {
                 })
                 // The window itself never leaves Lamio.
                 .on_navigation(move |url| {
-                    let inside = url.scheme() == "about" || url.host_str().map(str::to_owned) == host;
+                    // The waiting page is served by the app itself (tauri://localhost).
+                    let inside = matches!(url.scheme(), "about" | "tauri") || url.host_str().map(str::to_owned) == host;
                     if !inside {
                         open_in_browser(url);
                     }

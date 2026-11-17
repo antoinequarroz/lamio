@@ -1,6 +1,6 @@
 # Lamio pour Mac
 
-Une vraie app Mac (icône dans le Dock, fenêtre à elle) qui ouvre le Lamio en ligne. Rien n'est embarqué : quand le serveur est mis à jour, l'app l'est aussi. Faite avec [Tauri](https://tauri.app), elle pèse quelques Mo.
+Une vraie app Mac (icône dans le Dock, fenêtre à elle) qui ouvre le Lamio en ligne. Elle n'embarque qu'une page d'attente : quand le serveur est mis à jour, l'app l'est aussi. Si le serveur est injoignable, elle le dit et réessaie toute seule. Faite avec [Tauri](https://tauri.app), elle pèse quelques Mo.
 
 Les liens vers Cairn, Metricove ou un site cité dans un message s'ouvrent dans le navigateur.
 
