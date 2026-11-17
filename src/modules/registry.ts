@@ -51,6 +51,14 @@ const MODULES: ModuleDef[] = [
     env: "ALFRED_URL",
   },
   {
+    id: "projets",
+    name: "TickUp",
+    role: "Gestion de projet",
+    description: "Projets, epics, tickets et sprints, en kanban, en liste ou sur un planning.",
+    icon: "projects",
+    env: "TICKUP_URL",
+  },
+  {
     id: "studio",
     name: "Nino",
     role: "Régie vidéo",

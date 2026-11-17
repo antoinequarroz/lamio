@@ -8,6 +8,7 @@ describe("modules", () => {
     const modules = listModules({ CAIRN_URL: "https://cairn.exemple.ch/" });
     expect(modules.find((m) => m.name === "Cairn")).toMatchObject({ status: "linked", url: "https://cairn.exemple.ch" });
     expect(modules.find((m) => m.name === "Metricove")).toMatchObject({ status: "soon" });
+    expect(listModules({ TICKUP_URL: "https://tickup.exemple.ch" }).find((m) => m.name === "TickUp")).toMatchObject({ id: "projets", status: "linked", url: "https://tickup.exemple.ch" });
     expect(modules.find((m) => m.name === "Cairn")?.sso).toBeUndefined();
   });
 

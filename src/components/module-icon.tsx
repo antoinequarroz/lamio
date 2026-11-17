@@ -1,4 +1,4 @@
-import { CalendarDays, Clapperboard, FileText, LayoutGrid, MessagesSquare, Send, type LucideProps } from "lucide-react";
+import { CalendarDays, Clapperboard, FileText, KanbanSquare, LayoutGrid, MessagesSquare, Send, type LucideProps } from "lucide-react";
 
 const ICONS: Record<string, React.ComponentType<LucideProps>> = {
   messages: MessagesSquare,
@@ -6,6 +6,7 @@ const ICONS: Record<string, React.ComponentType<LucideProps>> = {
   publication: Send,
   agenda: CalendarDays,
   studio: Clapperboard,
+  projects: KanbanSquare,
 };
 
 export function ModuleIcon({ icon, ...props }: { icon: string } & LucideProps) {
