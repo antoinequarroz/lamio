@@ -27,15 +27,6 @@ const MODULES: ModuleDef[] = [
     href: "/c",
   },
   {
-    id: "projets",
-    name: "Projets",
-    role: "Projets et tâches",
-    description: "Les projets de l'équipe, leurs tâches en liste ou en tableau, et un canal par projet.",
-    icon: "projets",
-    core: true,
-    href: "/p",
-  },
-  {
     id: "notes",
     name: "Cairn",
     role: "Notes et coffre",

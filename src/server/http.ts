@@ -23,12 +23,3 @@ export const email = (value: unknown) => {
 export const MAX_NAME = 80;
 export const MAX_MESSAGE = 8000;
 export const MAX_FILES_PER_MESSAGE = 10;
-export const MAX_TASK_TITLE = 200;
-export const MAX_DESCRIPTION = 4000;
-
-/** A day written "YYYY-MM-DD" that exists in the calendar, or null. */
-export function day(value: unknown): string | null {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const d = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value ? value : null;
-}

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, FolderKanban, Hash, LayoutGrid, Lock, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, Hash, LayoutGrid, Lock, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -18,7 +18,6 @@ import { Avatar, Kbd, primaryClass } from "./ui";
 
 const NAV = [
   { href: "/c", label: "Messagerie", Icon: MessagesSquare },
-  { href: "/p", label: "Projets", Icon: FolderKanban },
   { href: "/modules", label: "Modules", Icon: LayoutGrid },
   { href: "/settings", label: "Réglages", Icon: Settings },
 ];
