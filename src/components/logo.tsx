@@ -1,14 +1,22 @@
 import { cn } from "@/lib/utils";
 
-/** A roped party: three climbers on one rope, the leader in the accent colour. */
-export function Logo({ className }: { className?: string }) {
+/**
+ * A picto from the Postmelo identity kit, in its light and dark variants.
+ * Both images are in the page and CSS shows the one matching the effective theme
+ * (system or forced in Réglages, see .theme-light / .theme-dark in globals.css).
+ */
+export function BrandIcon({ slug, className, alt = "" }: { slug: string; className?: string; alt?: string }) {
   return (
-    <svg viewBox="0 0 28 28" className={cn("size-7", className)} aria-hidden>
-      <rect width="28" height="28" rx="8" fill="var(--ink)" />
-      <path d="M7.4 20.2 14 14.6l6.6-6.4" fill="none" stroke="var(--bg)" strokeWidth="1.7" strokeLinecap="round" opacity=".45" />
-      <circle cx="7.4" cy="20.2" r="2.9" fill="var(--bg)" opacity=".6" />
-      <circle cx="14" cy="14.4" r="2.9" fill="var(--bg)" opacity=".85" />
-      <circle cx="20.6" cy="8.2" r="3.1" fill="var(--accent)" />
-    </svg>
+    <span className={cn("relative inline-block size-7 shrink-0", className)} role={alt ? "img" : undefined} aria-label={alt || undefined} aria-hidden={alt ? undefined : true}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={`/brand/${slug}/icon-light-128.png`} alt="" width={128} height={128} draggable={false} className="theme-light absolute inset-0 size-full" />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={`/brand/${slug}/icon-dark-128.png`} alt="" width={128} height={128} draggable={false} className="theme-dark absolute inset-0 size-full" />
+    </span>
   );
+}
+
+/** Lamio's knot: three loops of one ribbon, in the accent violet. */
+export function Logo({ className }: { className?: string }) {
+  return <BrandIcon slug="lamio" className={className} />;
 }

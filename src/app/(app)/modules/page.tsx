@@ -4,7 +4,7 @@ import { ArrowUpRight, KeyRound } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ModuleIcon } from "@/components/module-icon";
+import { ModulePicto } from "@/components/module-icon";
 import { Avatar, Card, Modal, PageHeader } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import type { ModuleInfo } from "@/lib/types";
@@ -40,9 +40,7 @@ export default function ModulesPage() {
             const inner = (
               <Card className={cn("rise flex h-full flex-col gap-3", m.href && "press hover:bg-surface-2")} style={{ animationDelay: `${i * 40}ms` }}>
                 <div className="flex items-center gap-3">
-                  <span className={cn("flex size-10 items-center justify-center rounded-xl", m.status === "soon" ? "bg-ink/[0.05] text-ink-3" : "bg-accent-soft text-accent")}>
-                    <ModuleIcon icon={m.icon} className="size-5" />
-                  </span>
+                  <ModulePicto icon={m.icon} className={cn("size-10", m.status === "soon" && "opacity-45 grayscale")} />
                   <div className="min-w-0 flex-1">
                     <h2 className="text-[15px] font-medium leading-tight">{m.name}</h2>
                     <p className="text-[12.5px] leading-tight text-ink-3">{m.role}</p>

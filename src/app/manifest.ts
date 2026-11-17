@@ -11,6 +11,12 @@ export default function manifest(): MetadataRoute.Manifest {
     display: "standalone",
     background_color: "#efede8",
     theme_color: "#efede8",
-    icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml" }],
+    // The dark variant is the approved one for installed icons, whatever the page's theme.
+    icons: [
+      { src: "/brand/lamio/app-dark-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/brand/lamio/app-dark-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/brand/lamio/maskable-dark-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+      { src: "/brand/lamio/maskable-dark-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ],
   };
 }

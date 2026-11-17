@@ -13,7 +13,7 @@ import { APP_NAME, cn, moduleLink } from "@/lib/utils";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
 import { Logo } from "./logo";
-import { ModuleIcon } from "./module-icon";
+import { ModulePicto } from "./module-icon";
 import { Avatar, Kbd, primaryClass } from "./ui";
 
 const NAV = [
@@ -111,7 +111,7 @@ function Sidebar() {
             <SectionTitle>Suite</SectionTitle>
             {linked.map((m) => (
               <a key={m.id} href={moduleLink(m)} target="_blank" rel="noreferrer" className="group flex h-8 shrink-0 items-center gap-2.5 rounded-lg px-2 text-[13.5px] text-ink-2 transition-colors duration-150 hover:bg-ink/[0.04] hover:text-ink">
-                <ModuleIcon icon={m.icon} className="size-4 text-ink-3" />
+                <ModulePicto icon={m.icon} className="size-[18px]" />
                 {m.name}
                 <ArrowUpRight className="ml-auto size-3.5 text-ink-3 opacity-0 transition-opacity group-hover:opacity-100" />
               </a>
