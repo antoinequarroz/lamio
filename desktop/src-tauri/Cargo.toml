@@ -1,8 +1,12 @@
 [package]
 name = "lamio"
 version = "0.4.0"
-description = "Lamio pour Mac"
+description = "Lamio pour Mac et iPhone"
 edition = "2021"
+
+[lib]
+name = "lamio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -2,10 +2,13 @@
   "name": "lamio-desktop",
   "private": true,
   "version": "0.4.0",
-  "description": "Lamio pour Mac : la fenêtre de l'app, qui ouvre le Lamio en ligne.",
+  "description": "Lamio pour Mac et iPhone : la fenêtre de l'app, qui ouvre le Lamio en ligne.",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "ios:init": "tauri ios init",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
     "icons": "tauri icon icon.png"
   },
   "devDependencies": {
