@@ -116,6 +116,8 @@ export function db() {
     const columns = conn.prepare(`select name from pragma_table_info('${table}')`).all() as { name: string }[];
     if (!columns.some((c) => c.name === column)) conn.exec(`alter table ${table} add column ${column} ${definition}`);
   };
+  // Kept to close the Compte Postmelo session too when this one is closed.
+  addColumn("sessions", "id_token", "text");
   addColumn("conversations", "private", "integer not null default 0");
   addColumn("messages", "edited_at", "text");
   addColumn("messages", "parent_id", "integer references messages (id) on delete cascade");
@@ -176,6 +178,29 @@ export function createFirstUser(input: { email: string; name: string; salt: stri
   })();
 }
 
+/**
+ * The person the Compte Postmelo just vouched for: found by id (accounts taken over from Lamio
+ * kept theirs), else by email, else created. The account is the reference for name, email and role.
+ * A person created here has no Lamio password: the password form refuses them.
+ */
+export function userFromAccount(person: { id: string; name: string; email: string; role: Role }): User {
+  return db().transaction(() => {
+    const email = person.email.trim().toLowerCase();
+    const name = person.name.trim() || email;
+    const found = (db().prepare("select * from users where id = ?").get(person.id) ?? db().prepare("select * from users where email = ?").get(email)) as UserRow | undefined;
+    if (!found) {
+      const first = countUsers() === 0;
+      db().prepare("insert into users (id, email, name, role, salt, password_hash, created_at) values (?, ?, ?, ?, ?, '', ?)").run(person.id, email, name, person.role, crypto.randomBytes(16).toString("hex"), now());
+      if (first) createChannel({ name: "general", topic: "Le canal de toute l'équipe", createdBy: person.id });
+      return getUser(person.id)!;
+    }
+    db().prepare("update users set name = ?, role = ? where id = ?").run(name, person.role, found.id);
+    // An email already used by someone else here stays as it was, rather than refusing the sign-in.
+    if (found.email !== email && !db().prepare("select 1 from users where email = ?").get(email)) db().prepare("update users set email = ? where id = ?").run(email, found.id);
+    return getUser(found.id)!;
+  })();
+}
+
 export const renameUser = (id: string, name: string) => db().prepare("update users set name = ? where id = ?").run(name.trim(), id);
 
 /** Changes the password and logs every device out (the caller opens a new session). */
@@ -188,9 +213,9 @@ export function setUserPassword(id: string, salt: string, hash: string) {
 
 // ---- Sessions
 
-export function addSession(tokenHash: string, userId: string, expiresAt: string) {
+export function addSession(tokenHash: string, userId: string, expiresAt: string, idToken: string | null = null) {
   db().prepare("delete from sessions where expires_at < ?").run(now());
-  db().prepare("insert into sessions (token_hash, user_id, expires_at) values (?, ?, ?)").run(tokenHash, userId, expiresAt);
+  db().prepare("insert into sessions (token_hash, user_id, expires_at, id_token) values (?, ?, ?, ?)").run(tokenHash, userId, expiresAt, idToken);
 }
 
 export function sessionUser(tokenHash: string): User | null {
@@ -198,7 +223,8 @@ export function sessionUser(tokenHash: string): User | null {
   return r ? toUser(r) : null;
 }
 
-export const removeSession = (tokenHash: string) => db().prepare("delete from sessions where token_hash = ?").run(tokenHash);
+/** Closes the session. Returns the ID token it was opened with, when it came from the Compte Postmelo. */
+export const removeSession = (tokenHash: string) => (db().prepare("delete from sessions where token_hash = ? returning id_token").get(tokenHash) as { id_token: string | null } | undefined)?.id_token ?? null;
 
 // ---- Single sign-on
 
