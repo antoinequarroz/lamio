@@ -26,6 +26,7 @@ Lamio fait partie de la même suite que [Cairn](https://github.com/antoinequarro
 - **Une seule connexion** : Cairn et Metricove s'ouvrent avec le compte Lamio, sans autre mot de passe. Les administrateurs y entrent toujours, et choisissent module par module quels membres y ont accès.
 - **Clair et sombre** : comme l'appareil, ou forcé dans Réglages.
 - **Installable** comme une app sur Mac (Safari, « Ajouter au Dock ») et sur iPhone (« Sur l'écran d'accueil »).
+- **App Mac** : une vraie app dans le Dock, à construire depuis [`desktop/`](desktop/README.md).
 
 ## Lancer en local
 
@@ -92,7 +93,7 @@ Next.js 15, React 19, Tailwind 4, SQLite (better-sqlite3). Un seul processus, un
 
 - Archiver ou supprimer un canal.
 - Notifications quand l'app est fermée.
-- Apps Mac (Tauri) et iOS, à partir du même code.
+- App iOS, et notifications de l'appareil dans l'app Mac.
 
 ## Déploiement
 
