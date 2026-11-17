@@ -81,7 +81,7 @@ export default function ModulesPage() {
         </div>
         {me.role === "admin" && (
           <p className="mx-auto mt-5 max-w-[860px] text-[12.5px] text-ink-3">
-            Pour brancher un outil, indique son adresse dans le fichier .env (CAIRN_URL, METRICOVE_URL, ALFRED_URL, NINO_URL). Avec un secret partagé en plus (CAIRN_SSO_SECRET), on y entre avec son compte {APP_NAME}, sans autre mot de passe.
+            Pour brancher un outil, indique son adresse dans le fichier .env (TICKUP_URL, CAIRN_URL, METRICOVE_URL, ALFRED_URL, NINO_URL). Avec un secret partagé en plus (CAIRN_SSO_SECRET), on y entre avec son compte {APP_NAME}, sans autre mot de passe.
           </p>
         )}
       </div>

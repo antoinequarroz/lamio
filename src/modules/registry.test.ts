@@ -16,6 +16,7 @@ describe("modules", () => {
     expect(listModules({ CAIRN_URL: "https://cairn.exemple.ch", CAIRN_SSO_SECRET: SECRET }).find((m) => m.name === "Cairn")?.sso).toBe(true);
     expect(ssoClient("cairn", { CAIRN_URL: "https://cairn.exemple.ch", CAIRN_SSO_SECRET: "court" })).toBeNull();
     expect(ssoClient("cairn", { CAIRN_SSO_SECRET: SECRET })).toBeNull();
+    expect(ssoClient("tickup", { TICKUP_URL: "https://tickup.exemple.ch", TICKUP_SSO_SECRET: SECRET })).toMatchObject({ id: "projets", name: "TickUp", url: "https://tickup.exemple.ch" });
     expect(ssoClient("inconnu", {})).toBeNull();
     expect(ssoClient("messagerie", {})).toBeNull();
   });

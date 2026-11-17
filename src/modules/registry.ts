@@ -9,7 +9,7 @@ import type { ModuleInfo } from "@/lib/types";
  *  - "soon"   : planned, not plugged in yet.
  *
  * To add a module: add an entry here. To plug an existing tool: give its URL in the
- * environment variable named in `env` (CAIRN_URL).
+ * environment variable named in `env` (CAIRN_URL, TICKUP_URL…).
  *
  * Single sign-on: give the tool a shared secret as well (CAIRN_SSO_SECRET here, LAMIO_SSO_SECRET
  * in the tool). The tool then offers "Se connecter avec Lamio", see src/server/sso.ts.
@@ -25,6 +25,14 @@ const MODULES: ModuleDef[] = [
     icon: "messages",
     core: true,
     href: "/c",
+  },
+  {
+    id: "projets",
+    name: "TickUp",
+    role: "Gestion de projet",
+    description: "Projets, epics, tickets et sous-tickets, en kanban, en liste ou sur un planning.",
+    icon: "projets",
+    env: "TICKUP_URL",
   },
   {
     id: "notes",

@@ -51,8 +51,8 @@ Copier `.env.example` en `.env.local` (en local) ou `.env` (sur le VPS). Rien n'
 | --- | --- |
 | `DATA_DIR` | Dossier de la base SQLite et des fichiers (`./data` par défaut). |
 | `MAX_FILE_MB` | Taille maximale d'un fichier joint (25 Mo par défaut). |
-| `CAIRN_URL`, `METRICOVE_URL`, `ALFRED_URL`, `NINO_URL` | Adresse d'un outil de la suite, pour le brancher. |
-| `CAIRN_SSO_SECRET`, `METRICOVE_SSO_SECRET`, … | Secret partagé avec l'outil (32 caractères au moins), pour y entrer avec son compte Lamio. |
+| `TICKUP_URL`, `CAIRN_URL`, `METRICOVE_URL`, `ALFRED_URL`, `NINO_URL` | Adresse d'un outil de la suite, pour le brancher. |
+| `TICKUP_SSO_SECRET`, `CAIRN_SSO_SECRET`, `METRICOVE_SSO_SECRET`, … | Secret partagé avec l'outil (32 caractères au moins), pour y entrer avec son compte Lamio. |
 
 ## Les modules
 
