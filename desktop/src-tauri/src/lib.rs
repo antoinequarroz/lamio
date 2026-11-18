@@ -4,7 +4,8 @@
 // lui passe la fenêtre. Une mise à jour du serveur met donc à jour l'app. Si le serveur est
 // injoignable, la page le dit et réessaie, au lieu de laisser une fenêtre blanche.
 // Pour viser un autre serveur : LAMIO_URL=https://… npm run build
-use tauri::{webview::NewWindowResponse, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{webview::NewWindowResponse, AppHandle, Runtime, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_opener::OpenerExt;
 
 const DEFAULT_URL: &str = "https://lamio.postmelo.ch";
 
@@ -27,9 +28,11 @@ fn account_host() -> Option<String> {
         .and_then(|url| url.host_str().map(str::to_owned))
 }
 
-fn open_in_browser(url: &Url) {
+/// Through the plugin instance: on the iPhone it asks iOS to open the link (Safari, Mail). The plain
+/// `tauri_plugin_opener::open_url` function starts a process, which an iPhone app may not do.
+fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &Url) {
     if matches!(url.scheme(), "http" | "https" | "mailto") {
-        let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+        let _ = app.opener().open_url(url.as_str(), None::<&str>);
     }
 }
 
@@ -56,6 +59,8 @@ pub fn run() {
             let home = home();
             let host = home.host_str().map(str::to_owned);
             let account = account_host();
+            let for_new_window = app.handle().clone();
+            let for_navigation = app.handle().clone();
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
             #[cfg(mobile)]
             let builder = builder.initialization_script(SAME_WINDOW_LINKS);
@@ -67,8 +72,8 @@ pub fn run() {
                 // Tells the waiting page which server to reach.
                 .initialization_script(format!("window.__LAMIO_URL__ = {:?};", home.as_str()))
                 // Links that ask for a new tab (Cairn, Metricove, a link in a message) go to the browser.
-                .on_new_window(|url, _features| {
-                    open_in_browser(&url);
+                .on_new_window(move |url, _features| {
+                    open_in_browser(&for_new_window, &url);
                     NewWindowResponse::Deny
                 })
                 // The window itself never leaves Lamio, except to sign in with the Compte Postmelo.
@@ -77,7 +82,7 @@ pub fn run() {
                     let target = url.host_str().map(str::to_owned);
                     let inside = matches!(url.scheme(), "about" | "tauri") || target == host || (target.is_some() && target == account);
                     if !inside {
-                        open_in_browser(url);
+                        open_in_browser(&for_navigation, url);
                     }
                     inside
                 })
