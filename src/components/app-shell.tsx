@@ -2,13 +2,14 @@
 
 import { ArrowUpRight, CalendarDays, Hash, LayoutGrid, Lock, Mail, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
 import { registerIosPush } from "@/lib/ios-push";
 import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
 import { useStored } from "@/lib/use-stored";
+import { useEdgeSwipe } from "@/lib/swipe-back";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
 import { APP_NAME, cn, moduleLink } from "@/lib/utils";
@@ -21,7 +22,7 @@ import { ModulePicto } from "./module-icon";
 import { Avatar, Kbd, primaryClass } from "./ui";
 
 const NAV = [
-  { href: "/c", label: "Messagerie", Icon: MessagesSquare },
+  { href: "/c", label: "Messagerie", short: "Messages", Icon: MessagesSquare },
   { href: "/mail", label: "Mails", Icon: Mail },
   { href: "/calendar", label: "Calendrier", Icon: CalendarDays },
   { href: "/modules", label: "Modules", Icon: LayoutGrid },
@@ -49,6 +50,9 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   // The iPhone app's push token, registered under this account.
   useEffect(() => registerIosPush(), []);
+  // On a phone, a swipe from the left edge goes back (see useSwipeBack).
+  const page = useRef<HTMLDivElement>(null);
+  useEdgeSwipe(page);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -79,8 +83,11 @@ function Shell({ children }: { children: React.ReactNode }) {
         </>
       )}
       <main className="flex min-w-0 flex-1 flex-col p-2 pl-0 max-md:p-0">
-        <MobileBar />
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0">{children}</div>
+        {/* On a phone: no frosted glass (costly to repaint while scrolling), a plain surface. */}
+        <div ref={page} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0 max-md:bg-surface max-md:shadow-none max-md:backdrop-blur-none">{children}</div>
+        <Suspense>
+          <TabBar />
+        </Suspense>
       </main>
       <CommandMenu />
       <Notifier />
@@ -118,7 +125,7 @@ function Rail({ onExpand }: { onExpand: () => void }) {
         <Search className="size-4" />
       </button>
       {nav.map(({ href, label, Icon }) => {
-        const active = pathname.startsWith(href);
+        const active = isUnder(pathname, href);
         const dot = (href === "/c" && unread > 0) || (href === "/mail" && !!mail?.unread);
         return (
           <Link key={href} href={href} aria-label={label} title={label} className={cn(button, active ? "bg-surface text-ink shadow-card" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}>
@@ -169,7 +176,7 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
 
       <nav className="flex flex-col gap-px">
         {nav.map(({ href, label, Icon }) => {
-          const active = pathname.startsWith(href);
+          const active = isUnder(pathname, href);
           return (
             <Link
               key={href}
@@ -351,24 +358,48 @@ export function ConversationList() {
   );
 }
 
-function MobileBar() {
+/** The phone's tab bar, at the bottom within thumb's reach. Hidden inside a conversation or an open mail, as on iOS. */
+function TabBar() {
   const pathname = usePathname();
-  const { setCommandOpen, setDialog } = useApp();
+  const params = useSearchParams();
+  const { conversations, mail } = useApp();
   const nav = useNav();
+  const unread = conversations.reduce((n, c) => n + c.unread, 0);
+  const mine = conversations.reduce((n, c) => n + forMe(c), 0);
+  if (pathname.startsWith("/c/") || (pathname === "/mail" && params.get("m"))) return null;
   return (
-    <div className="flex items-center gap-1 border-b border-line px-3 py-2 md:hidden">
-      <Logo className="mr-1 size-6" />
-      {nav.map(({ href, label, Icon }) => (
-        <Link key={href} href={href} aria-label={label} className={cn("flex size-9 items-center justify-center rounded-lg", pathname.startsWith(href) ? "bg-surface text-accent shadow-card" : "text-ink-3")}>
-          <Icon className="size-[18px]" />
-        </Link>
-      ))}
-      <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" className="ml-auto flex size-9 items-center justify-center rounded-lg text-ink-3">
+    <nav aria-label="Sections" className="flex shrink-0 border-t border-line bg-bg px-1 pt-1 pb-0.5 md:hidden">
+      {nav.map(({ href, label, short, Icon }) => {
+        const active = isUnder(pathname, href);
+        const count = href === "/c" ? mine || unread : href === "/mail" ? (mail?.unread ?? 0) : 0;
+        return (
+          <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cn("press relative flex h-[50px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg text-[10.5px] font-medium", active ? "text-accent" : "text-ink-3")}>
+            <Icon className="size-[22px]" strokeWidth={active ? 2.2 : 1.9} />
+            <span className="max-w-full truncate">{short ?? label}</span>
+            {count > 0 && (
+              <span className={cn("tabular absolute top-0.5 left-1/2 ml-1.5 min-w-[18px] rounded-full px-1 text-center text-[10.5px] leading-[18px] font-semibold ring-2 ring-bg", href === "/c" && mine === 0 ? "bg-ink/[0.55] text-bg" : "bg-accent text-accent-ink")}>{count > 99 ? "99+" : count}</span>
+            )}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** Search and a new message, at the top of the conversation list on a phone. */
+export function MobileActions() {
+  const { setCommandOpen, setDialog } = useApp();
+  return (
+    <div className="flex items-center gap-1.5 md:hidden">
+      <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" className="press flex size-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-2 shadow-card">
         <Search className="size-[18px]" />
       </button>
-      <button onClick={() => setDialog("dm")} aria-label="Nouveau message" className="press flex size-9 items-center justify-center rounded-lg bg-accent text-accent-ink">
-        <SquarePen className="size-4" strokeWidth={2.2} />
+      <button onClick={() => setDialog("dm")} aria-label="Nouveau message" className={cn("press flex size-10 items-center justify-center rounded-full", primaryClass)}>
+        <SquarePen className="size-[18px]" strokeWidth={2.2} />
       </button>
     </div>
   );
 }
+
+/** "/c" is the Messagerie, "/calendar" is not part of it. */
+const isUnder = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`);

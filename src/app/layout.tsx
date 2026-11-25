@@ -18,6 +18,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   // The page paints under the iPhone's notch and home bar; globals.css keeps the content out of them.
   viewportFit: "cover",
+  // An app, not a web page: no pinch zoom, and no zoom when a field gets the focus.
+  maximumScale: 1,
+  userScalable: false,
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#efede8" },
     { media: "(prefers-color-scheme: dark)", color: "#0f0f0e" },

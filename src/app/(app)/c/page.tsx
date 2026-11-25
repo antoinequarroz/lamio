@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { ConversationList } from "@/components/app-shell";
+import { ConversationList, MobileActions } from "@/components/app-shell";
 import { PageHeader } from "@/components/ui";
 import { useApp } from "@/lib/store";
 
@@ -18,7 +18,9 @@ export default function MessagingHome() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col md:hidden">
-      <PageHeader title="Messagerie" />
+      <PageHeader title="Messagerie">
+        <MobileActions />
+      </PageHeader>
       <div className="scroll-thin flex flex-1 flex-col overflow-y-auto px-2 py-2">
         <ConversationList />
       </div>

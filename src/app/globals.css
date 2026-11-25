@@ -155,6 +155,34 @@ body::after {
   filter: var(--grain-filter);
 }
 
+/* Touch screens (the iPhone app): the grain is a plain overlay, not a blend. A blended layer over the
+   whole screen makes WebKit recomposite everything under it on every scrolled frame. Black noise in
+   "normal" looks the same as in "multiply"; the dark theme keeps its inverted (white) noise. */
+@media (hover: none) {
+  body::after {
+    inset: 0;
+    mix-blend-mode: normal;
+    opacity: calc(var(--grain-opacity) * 0.6);
+  }
+}
+
+/* Feels like an app, not a web page: no grey flash on tap, no double-tap zoom, no rubber band of the
+   whole page (lists still bounce inside), no long-press link preview. */
+html {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+@media (hover: none) {
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+  a,
+  img {
+    -webkit-touch-callout: none;
+  }
+}
+
 /* Soft glow behind the app so the grain has something to sit on. */
 body::before {
   content: "";

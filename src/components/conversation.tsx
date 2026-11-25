@@ -2,10 +2,11 @@
 
 import { ArrowLeft, Hash, Lock, Settings2, Users, X } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApp } from "@/lib/store";
+import { useSwipeBack } from "@/lib/swipe-back";
 import type { Message } from "@/lib/types";
 import { api, cn, dayLabel } from "@/lib/utils";
 import { CallButton } from "./call";
@@ -110,6 +111,9 @@ export function ConversationView({ id }: { id: string }) {
 
   // Stable, so the thread panel does not reload each time this view renders.
   const closeThread = useCallback(() => setThreadId(null), []);
+  // Swiping from the edge on a phone: closes the thread, else back to the list.
+  const router = useRouter();
+  useSwipeBack(threadId !== null ? closeThread : () => router.push("/c"));
   const parentChanged = useCallback((m: Message) => setMessages((list) => replace(list, m)), []);
 
   const loadOlder = async () => {

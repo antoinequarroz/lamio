@@ -15,6 +15,7 @@ import { ResizeHandle } from "@/components/resize-handle";
 import { Avatar, Button, Card, Kbd, Modal } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { useStored } from "@/lib/use-stored";
+import { useSwipeBack } from "@/lib/swipe-back";
 import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailCategory, MailContent, MailFolder, MailLaterInfo, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
@@ -116,6 +117,9 @@ export function MailView() {
     },
     [router],
   );
+
+  // On a phone, swiping from the edge goes back from a mail to its list.
+  useSwipeBack(openUid ? () => go(folder, null) : null);
 
   // How many are shown, so a live refresh keeps the pages already loaded.
   const shown = useRef(PAGE);
