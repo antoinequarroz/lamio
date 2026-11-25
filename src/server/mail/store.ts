@@ -257,3 +257,31 @@ export function mailSummaries(userId: string, folder: string, uids: number[]): M
     .map(toSummary)
     .sort((a, b) => b.date.localeCompare(a.date) || b.uid - a.uid);
 }
+
+// ---- Opened mails
+
+type Body = { text: string; fromHtml: boolean; attachmentList: { name: string; type: string; size: number }[] };
+
+export function mailBody(userId: string, folder: string, uid: number): Body | null {
+  const r = db().prepare("select body_text from mail_messages where user_id = ? and folder = ? and uid = ?").get(userId, folder, uid) as { body_text: string | null } | undefined;
+  if (!r?.body_text) return null;
+  try {
+    return JSON.parse(r.body_text) as Body;
+  } catch {
+    return null;
+  }
+}
+
+export const setMailBody = (userId: string, folder: string, uid: number, body: Body) =>
+  db().prepare("update mail_messages set body_text = ? where user_id = ? and folder = ? and uid = ?").run(JSON.stringify(body), userId, folder, uid);
+
+/** Opened here: the unread count drops at once, without waiting for the next sync. */
+export const adjustUnread = (userId: string, folder: string, delta: number) =>
+  db().prepare("update mail_folders set unread = max(0, unread + ?) where user_id = ? and path = ?").run(delta, userId, folder);
+
+/** The inbox's unread mails, or null without a mailbox: the badge of the Mails tab. */
+export function inboxUnread(userId: string): number | null {
+  if (!db().prepare("select 1 from mail_accounts where user_id = ?").get(userId)) return null;
+  const r = db().prepare("select unread from mail_folders where user_id = ? and special_use = '\\Inbox'").get(userId) as { unread: number } | undefined;
+  return r?.unread ?? 0;
+}

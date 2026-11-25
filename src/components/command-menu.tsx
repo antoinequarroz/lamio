@@ -1,7 +1,7 @@
 "use client";
 
 import { Command } from "cmdk";
-import { Hash, LayoutGrid, Lock, MessageSquareText, Plus, Settings, SquarePen, User } from "lucide-react";
+import { Hash, LayoutGrid, Lock, Mail, MessageSquareText, Plus, Settings, SquarePen, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
@@ -111,6 +111,9 @@ export function CommandMenu() {
           </Item>
           <Item onSelect={() => run(() => setDialog("channel"))} icon={<Plus className="size-4" />}>
             Créer un canal
+          </Item>
+          <Item onSelect={() => run(() => router.push("/mail"))} icon={<Mail className="size-4" />}>
+            Mails
           </Item>
           <Item onSelect={() => run(() => router.push("/modules"))} icon={<LayoutGrid className="size-4" />}>
             Modules

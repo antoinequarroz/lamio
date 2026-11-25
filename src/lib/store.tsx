@@ -76,6 +76,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       source.onmessage = (e) => {
         const event = JSON.parse(e.data) as ServerEvent;
         if (event.type === "refresh") return void reload();
+        // The badge of the Mails tab follows the inbox.
+        if (event.type === "mail") void reload();
         if (event.type === "message") {
           const { conversationId, id, userId, mentionIds } = event.message;
           const reading = conversationId === active.current && !document.hidden;

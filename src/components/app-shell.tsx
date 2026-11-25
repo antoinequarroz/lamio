@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Hash, LayoutGrid, Lock, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, Hash, LayoutGrid, Lock, Mail, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -18,6 +18,7 @@ import { Avatar, Kbd, primaryClass } from "./ui";
 
 const NAV = [
   { href: "/c", label: "Messagerie", Icon: MessagesSquare },
+  { href: "/mail", label: "Mails", Icon: Mail },
   { href: "/modules", label: "Modules", Icon: LayoutGrid },
   { href: "/settings", label: "Réglages", Icon: Settings },
 ];
@@ -64,7 +65,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Sidebar() {
   const pathname = usePathname();
-  const { me, conversations, modules, setCommandOpen, setDialog } = useApp();
+  const { me, conversations, modules, mail, setCommandOpen, setDialog } = useApp();
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
   const mine = conversations.reduce((n, c) => n + forMe(c), 0);
   const linked = modules.filter((m) => m.status === "linked" && moduleLink(m));
@@ -99,6 +100,7 @@ function Sidebar() {
               <Icon className={cn("size-4", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />
               {label}
               {href === "/c" && unread > 0 && <Badge n={mine || unread} strong={mine > 0} />}
+              {href === "/mail" && !!mail?.unread && <Badge n={mail.unread} />}
             </Link>
           );
         })}

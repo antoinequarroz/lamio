@@ -67,7 +67,14 @@ export type ModuleInfo = {
   allowedIds?: string[];
 };
 
-export type AppState = { me: User; users: User[]; conversations: Conversation[]; modules: ModuleInfo[] };
+export type AppState = {
+  me: User;
+  users: User[];
+  conversations: Conversation[];
+  modules: ModuleInfo[];
+  /** My mailbox, when one is plugged in: the unread mails of the inbox, for the Mails tab badge. */
+  mail: { unread: number } | null;
+};
 
 /** What the server pushes over /api/events. */
 export type ServerEvent =
@@ -100,6 +107,11 @@ export type MailAccountInfo = {
 export type MailFolder = { path: string; name: string; delimiter: string; specialUse: string | null; total: number; unread: number };
 
 export type MailAddress = { name: string; address: string };
+
+export type MailAttachment = { name: string; type: string; size: number };
+
+/** An opened mail: its text (HTML mails as text for now, the safe HTML view comes with LAMIO-303). */
+export type MailContent = MailSummary & { text: string; fromHtml: boolean; attachmentList: MailAttachment[] };
 
 export type MailSummary = {
   folder: string;

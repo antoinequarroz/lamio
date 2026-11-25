@@ -62,6 +62,25 @@ function toText(bytes: Buffer, charset: string): string {
 
 const ENTITIES: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", eacute: "é", egrave: "è", agrave: "à", ccedil: "ç", rsquo: "’", laquo: "«", raquo: "»" };
 
+/** An HTML mail as readable text: paragraphs and line breaks kept, links as "text (address)". */
+export function htmlToReadable(html: string): string {
+  const withBreaks = html
+    .replace(/<(style|script|head|title)[^>]*>[\s\S]*?(<\/\1>|$)/gi, "")
+    .replace(/<a\b[^>]*href\s*=\s*["']?(https?:[^"' >]+)["']?[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+      const text = label.replace(/<[^>]*>/g, "").trim();
+      return text && text !== href ? `${text} (${href})` : href;
+    })
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|tr|table|blockquote)>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "• ");
+  return htmlToText(withBreaks)
+    .split("\n")
+    .map((l) => l.replace(/[ \t\u00a0]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function htmlToText(html: string): string {
   return html
     .replace(/<(style|script|head|title)[^>]*>[\s\S]*?(<\/\1>|$)/gi, " ")

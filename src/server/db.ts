@@ -177,6 +177,8 @@ export function db() {
   addColumn("conversations", "private", "integer not null default 0");
   addColumn("messages", "edited_at", "text");
   addColumn("messages", "parent_id", "integer references messages (id) on delete cascade");
+  // Mails: the text of a mail, kept once it has been opened.
+  addColumn("mail_messages", "body_text", "text");
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;
