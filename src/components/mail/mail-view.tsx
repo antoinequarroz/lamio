@@ -55,6 +55,11 @@ export function MailView() {
   const [compose, setCompose] = useState<ComposeInit | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [moving, setMoving] = useState<number[] | null>(null);
+  const [help, setHelp] = useState(false);
+  // The last action that Z undoes (a move, a read or a flag).
+  const undoLast = useRef<(() => Promise<void>) | null>(null);
+  // "g" then a letter: go to a folder.
+  const goPrefix = useRef(0);
   const [search, setSearch] = useState<MailSearch | null>(null);
   const [results, setResults] = useState<MailSummary[]>([]);
   const [searching, setSearching] = useState<"" | "local" | "server">("");
@@ -253,27 +258,42 @@ export function MailView() {
       setSelected(new Set());
       try {
         const r = await api<{ moved?: { to: string; uids: number[] } }>("/api/mail/actions", { method: "POST", json: { folder: from, uids, action } });
-        if (!leaves) return;
+        if (!leaves) {
+          // Read / flag: Z puts them back as they were.
+          if (action.type === "seen" || action.type === "flagged") {
+            const before = uids.map((u) => [u, (search ? results : messages).find((m) => m.uid === u)?.[action.type]] as const).filter(([, v]) => v !== undefined && v !== action.value);
+            undoLast.current = before.length
+              ? async () => {
+                  undoLast.current = null;
+                  await act(
+                    before.map(([u]) => u),
+                    { type: action.type, value: !action.value },
+                    true,
+                  );
+                }
+              : null;
+          }
+          return;
+        }
         const n = uids.length > 1 ? `${uids.length} mails` : "Mail";
         const s = uids.length > 1 ? "s" : "";
         const label =
           action.type === "archive" ? `${n} archivé${s}` : action.type === "trash" ? `${n} dans la corbeille` : action.type === "spam" ? `${n} en spam` : action.type === "delete" ? `${n} supprimé${s} définitivement` : `${n} déplacé${s}`;
         const moved = r.moved;
-        toast(label, {
-          action: moved?.uids.length
-            ? {
-                label: "Annuler",
-                onClick: async () => {
-                  try {
-                    await api("/api/mail/actions", { method: "POST", json: { folder: moved.to, uids: moved.uids, action: { type: "move", to: from } } });
-                    await loadMessages(from, shown.current);
-                  } catch (e) {
-                    toast.error((e as Error).message);
-                  }
-                },
+        const undo = moved?.uids.length
+          ? async () => {
+              undoLast.current = null;
+              try {
+                await api("/api/mail/actions", { method: "POST", json: { folder: moved.to, uids: moved.uids, action: { type: "move", to: from } } });
+                await loadMessages(from, shown.current);
+                toast("Action annulée");
+              } catch (e) {
+                toast.error((e as Error).message);
               }
-            : undefined,
-        });
+            }
+          : null;
+        undoLast.current = undo;
+        toast(label, { action: undo ? { label: "Annuler (Z)", onClick: () => void undo() } : undefined });
       } catch (e) {
         toast.error((e as Error).message);
         void loadMessages(from, shown.current).catch(() => {});
@@ -298,6 +318,29 @@ export function MailView() {
     [messages],
   );
 
+  // g then i / s / d / a / t / j: Réception, Envoyés, Brouillons, Archives, Corbeille, Spam.
+  // Caught first (capture), so the letter does not also reach the reader (a = reply to all).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!goPrefix.current) return;
+      const fresh = Date.now() - goPrefix.current < 1500;
+      if (e.key === "g" || e.key === "Shift") return;
+      goPrefix.current = 0;
+      const t = e.target as HTMLElement;
+      if (!fresh || compose || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
+      const use = ({ i: "\\Inbox", s: "\\Sent", d: "\\Drafts", a: "\\Archive", t: "\\Trash", j: "\\Junk" } as Record<string, string>)[e.key];
+      if (!use) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const target = use === "\\Inbox" ? "INBOX" : folders.find((f) => f.specialUse === use)?.path;
+      if (!target) return void toast(`Cette boîte n'a pas ce dossier`);
+      if (search) closeSearch();
+      go(target, null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [folders, compose, search, closeSearch, go]);
+
   // j / k: next / previous mail. Escape: back to the list.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -305,6 +348,31 @@ export function MailView() {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
       const list = search ? results : messages;
       const i = list.findIndex((m) => m.folder === folder && m.uid === openUid);
+      if (e.key === "?" && !compose && !moving) {
+        e.preventDefault();
+        setHelp((h) => !h);
+        return;
+      }
+      if (help) return;
+      if (e.key === "g" && !compose && !moving) {
+        goPrefix.current = Date.now();
+        return;
+      }
+      if (e.key === "z" && !compose && !moving && undoLast.current) {
+        e.preventDefault();
+        void undoLast.current();
+        return;
+      }
+      if ((e.key === "I" || e.key === "U") && !compose && !moving && (selected.size || openUid)) {
+        e.preventDefault();
+        void act(selected.size ? [...selected] : [openUid!], { type: "seen", value: e.key === "I" });
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "o") && !openUid && !compose && !moving && !selected.size && list[0]) {
+        e.preventDefault();
+        go(list[0].folder, list[0].uid);
+        return;
+      }
       if (e.key === "/" && !compose && !moving) {
         e.preventDefault();
         if (search) document.getElementById("mail-search")?.focus();
@@ -358,7 +426,7 @@ export function MailView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [messages, results, search, openUid, folder, go, compose, moving, selected, act, isTrash, isJunk, toggleSelect, openSearch, closeSearch]);
+  }, [messages, results, search, openUid, folder, go, compose, moving, selected, act, isTrash, isJunk, toggleSelect, openSearch, closeSearch, help]);
 
   const sent = useCallback((id: string, undoMs: number, state: SendState) => {
     outgoing.current.set(id, state);
@@ -530,7 +598,7 @@ export function MailView() {
             isDrafts={current?.specialUse === "\\Drafts"}
             trash={isTrash || isJunk}
             junk={isJunk}
-            busy={!!compose || !!moving || selected.size > 0}
+            busy={!!compose || !!moving || selected.size > 0 || help}
             onCompose={setCompose}
             threaded={threaded && !search}
             onAction={(a, uids) => void act(uids ?? [openUid], a, !!uids)}
@@ -550,6 +618,7 @@ export function MailView() {
           }}
         />
       )}
+      {help && <ShortcutsHelp onClose={() => setHelp(false)} />}
       {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} signature={info.signature} onClose={() => setCompose(null)} onSent={sent} />}
     </div>
   );
@@ -1342,6 +1411,105 @@ function Action({ label, Icon, onClick, active, small }: { label: string; Icon: 
   );
 }
 
+const SHORTCUTS: { title: string; keys: [string[], string][] }[] = [
+  {
+    title: "Parcourir",
+    keys: [
+      [["J"], "Mail suivant"],
+      [["K"], "Mail précédent"],
+      [["O"], "Ouvrir le premier mail"],
+      [["Échap"], "Revenir à la liste, fermer"],
+      [["/"], "Rechercher"],
+      [["G", "I"], "Boîte de réception"],
+      [["G", "S"], "Envoyés"],
+      [["G", "D"], "Brouillons"],
+      [["G", "A"], "Archives"],
+      [["G", "T"], "Corbeille"],
+      [["G", "J"], "Spam"],
+    ],
+  },
+  {
+    title: "Écrire",
+    keys: [
+      [["C"], "Nouveau mail"],
+      [["R"], "Répondre"],
+      [["A"], "Répondre à tous"],
+      [["F"], "Transférer"],
+      [["⌘", "Entrée"], "Envoyer"],
+    ],
+  },
+  {
+    title: "Ranger",
+    keys: [
+      [["E"], "Archiver"],
+      [["#"], "Corbeille"],
+      [["!"], "Spam"],
+      [["V"], "Déplacer"],
+      [["S"], "Drapeau"],
+      [["U"], "Marquer non lu"],
+      [["Maj", "I"], "Marquer lu (sélection)"],
+      [["Maj", "U"], "Marquer non lu (sélection)"],
+      [["Z"], "Annuler la dernière action"],
+    ],
+  },
+  {
+    title: "Sélection et affichage",
+    keys: [
+      [["X"], "Sélectionner le mail ouvert"],
+      [["Maj", "clic"], "Sélectionner une plage"],
+      [["⌘", "\\"], "Replier la barre latérale"],
+      [["⌘", "K"], "Tout trouver dans Lamio"],
+      [["?"], "Cette aide"],
+    ],
+  },
+];
+
+/** Every shortcut of the Mails tab. ? or Escape closes it. */
+function ShortcutsHelp({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,14,12,0.3)] p-4 backdrop-blur-[2px]" onClick={onClose}>
+      <div role="dialog" aria-label="Raccourcis clavier" className="scroll-thin max-h-full w-[min(760px,100%)] overflow-y-auto rounded-2xl border border-line-strong bg-surface p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center">
+          <h2 className="flex-1 text-[16px] font-semibold">Raccourcis clavier</h2>
+          <button onClick={onClose} aria-label="Fermer" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+          {SHORTCUTS.map((g) => (
+            <section key={g.title}>
+              <h3 className="mb-1.5 text-[11px] font-medium tracking-wide text-ink-3 uppercase">{g.title}</h3>
+              <ul className="flex flex-col">
+                {g.keys.map(([keys, label]) => (
+                  <li key={label} className="flex h-7 items-center gap-3 text-[13px]">
+                    <span className="flex-1 text-ink-2">{label}</span>
+                    <span className="flex items-center gap-1">
+                      {keys.map((k, i) => (
+                        <Kbd key={i}>{k}</Kbd>
+                      ))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function EmptyReader({ count }: { count: number }) {
   return (
     <Centered>
@@ -1352,6 +1520,10 @@ function EmptyReader({ count }: { count: number }) {
           <Kbd>J</Kbd>
           <Kbd>K</Kbd>
           pour passer d&apos;un mail à l&apos;autre
+        </p>
+        <p className="flex items-center gap-1.5 text-[12px]">
+          <Kbd>?</Kbd>
+          pour tous les raccourcis
         </p>
       </div>
     </Centered>
