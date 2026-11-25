@@ -2,7 +2,7 @@ import "server-only";
 import type { Readable } from "node:stream";
 import type { ImapFlow } from "imapflow";
 import type { MailAttachment, MailContent } from "@/lib/types";
-import { imapClient } from "./connect";
+import { imapClient, MailProblem } from "./connect";
 import { cleanMailHtml } from "./html";
 import { htmlToReadable, type StructureNode } from "./preview";
 import { settingsFor } from "./service";
@@ -109,7 +109,7 @@ export async function openMail(userId: string, folder: string, uid: number, conn
   if (cached && summary.seen) return { ...summary, ...cached, trusted };
 
   const client = connect(userId);
-  if (!client) throw new Error("Aucune boîte mail branchée");
+  if (!client) throw new MailProblem("Aucune boîte mail branchée");
   client.on("error", () => {});
   try {
     await client.connect();

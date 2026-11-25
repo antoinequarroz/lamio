@@ -1,7 +1,7 @@
 import "server-only";
 import type { Readable } from "node:stream";
 import type { ImapFlow } from "imapflow";
-import { imapClient } from "./connect";
+import { imapClient, MailProblem } from "./connect";
 import { settingsFor } from "./service";
 import * as store from "./store";
 
@@ -22,7 +22,7 @@ export type Part = { data: Buffer; type: string; name: string };
 export async function readPart(userId: string, folder: string, uid: number, part: string, connect: (userId: string) => ImapFlow | null = defaultConnect): Promise<Part | null> {
   if (!store.mailSummaries(userId, folder, [uid])[0]) return null;
   const client = connect(userId);
-  if (!client) throw new Error("Aucune boîte mail branchée");
+  if (!client) throw new MailProblem("Aucune boîte mail branchée");
   client.on("error", () => {});
   try {
     await client.connect();
@@ -35,7 +35,7 @@ export async function readPart(userId: string, folder: string, uid: number, part
       for await (const chunk of download.content as Readable) {
         const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         size += b.length;
-        if (size > MAX_ATTACHMENT) throw new Error("Fichier trop lourd pour être ouvert ici (plus de 40 Mo) : ouvre-le dans le webmail.");
+        if (size > MAX_ATTACHMENT) throw new MailProblem("Fichier trop lourd pour être ouvert ici (plus de 40 Mo) : ouvre-le dans le webmail.");
         chunks.push(b);
       }
       const { contentType, filename } = download.meta;

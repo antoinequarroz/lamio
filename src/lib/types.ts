@@ -139,3 +139,13 @@ export type MailSummary = {
 
 /** Who a mail is written to, and how it relates to another one. */
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward" | "draft";
+
+/** What can be done to mails from Lamio (on the real mailbox). "delete" is for good, from the Trash or the Spam. */
+export type MailAction =
+  | { type: "seen"; value: boolean }
+  | { type: "flagged"; value: boolean }
+  | { type: "move"; to: string }
+  | { type: "archive" }
+  | { type: "trash" }
+  | { type: "spam" }
+  | { type: "delete" };

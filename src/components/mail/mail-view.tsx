@@ -1,15 +1,16 @@
 "use client";
 
-import { Archive, ArrowLeft, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, Forward, Inbox, Loader2, Mail, Paperclip, PencilLine, RefreshCw, Reply, ReplyAll, Send, ShieldAlert, SquarePen, Trash2, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, Loader2, Mail, MailOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
 import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
 import { Avatar, Button, Card, Kbd } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import type { ComposeMode, MailAccountInfo, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
+import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
@@ -45,6 +46,8 @@ export function MailView() {
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
   const [compose, setCompose] = useState<ComposeInit | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [moving, setMoving] = useState<number[] | null>(null);
   // Mails waiting to leave or just sent: to reopen them on "Annuler" or when sending failed.
   const outgoing = useRef(new Map<string, SendState>());
 
@@ -87,6 +90,7 @@ export function MailView() {
   useEffect(() => {
     setLoading(true);
     setMessages([]);
+    setSelected(new Set());
     void loadMessages(folder).catch(() => setLoading(false));
   }, [folder, loadMessages]);
 
@@ -138,6 +142,76 @@ export function MailView() {
     }
   };
 
+  const isTrash = current?.specialUse === "\\Trash";
+  const isJunk = current?.specialUse === "\\Junk";
+
+  /**
+   * Does it at once in the list, then on the mailbox; on failure the list comes back as it was.
+   * A move can be undone for a few seconds ("Annuler").
+   */
+  const act = useCallback(
+    async (uids: number[], action: MailAction) => {
+      if (!uids.length) return;
+      if (action.type === "delete" && !window.confirm(uids.length > 1 ? `Supprimer définitivement ces ${uids.length} mails ?` : "Supprimer définitivement ce mail ?")) return;
+      const from = folder;
+      const leaves = action.type !== "seen" && action.type !== "flagged";
+      if (leaves) {
+        // The mail open goes away: the next one opens, like in Mail.
+        if (openUid && uids.includes(openUid)) {
+          const i = messages.findIndex((m) => m.uid === openUid);
+          const next = messages.slice(i + 1).find((m) => !uids.includes(m.uid)) ?? messages.slice(0, i).reverse().find((m) => !uids.includes(m.uid));
+          go(from, next?.uid ?? null);
+        }
+        setMessages((list) => list.filter((m) => !uids.includes(m.uid)));
+      } else setMessages((list) => list.map((m) => (uids.includes(m.uid) ? { ...m, [action.type]: action.value } : m)));
+      setSelected(new Set());
+      try {
+        const r = await api<{ moved?: { to: string; uids: number[] } }>("/api/mail/actions", { method: "POST", json: { folder: from, uids, action } });
+        if (!leaves) return;
+        const n = uids.length > 1 ? `${uids.length} mails` : "Mail";
+        const s = uids.length > 1 ? "s" : "";
+        const label =
+          action.type === "archive" ? `${n} archivé${s}` : action.type === "trash" ? `${n} dans la corbeille` : action.type === "spam" ? `${n} en spam` : action.type === "delete" ? `${n} supprimé${s} définitivement` : `${n} déplacé${s}`;
+        const moved = r.moved;
+        toast(label, {
+          action: moved?.uids.length
+            ? {
+                label: "Annuler",
+                onClick: async () => {
+                  try {
+                    await api("/api/mail/actions", { method: "POST", json: { folder: moved.to, uids: moved.uids, action: { type: "move", to: from } } });
+                    await loadMessages(from, shown.current);
+                  } catch (e) {
+                    toast.error((e as Error).message);
+                  }
+                },
+              }
+            : undefined,
+        });
+      } catch (e) {
+        toast.error((e as Error).message);
+        void loadMessages(from, shown.current).catch(() => {});
+      }
+    },
+    [folder, openUid, messages, go, loadMessages],
+  );
+
+  const toggleSelect = useCallback(
+    (uid: number, range: boolean) => {
+      setSelected((sel) => {
+        const next = new Set(sel);
+        const last = [...sel].at(-1);
+        if (range && last !== undefined) {
+          const a = messages.findIndex((m) => m.uid === last), b = messages.findIndex((m) => m.uid === uid);
+          messages.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((m) => next.add(m.uid));
+        } else if (next.has(uid)) next.delete(uid);
+        else next.add(uid);
+        return next;
+      });
+    },
+    [messages],
+  );
+
   // j / k: next / previous mail. Escape: back to the list.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -149,7 +223,31 @@ export function MailView() {
         setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" });
         return;
       }
-      if (compose) return;
+      if (compose || moving) return;
+      if (selected.size) {
+        const uids = [...selected];
+        const keyAction: Record<string, MailAction> = { e: { type: "archive" }, "#": isTrash || isJunk ? { type: "delete" } : { type: "trash" }, Delete: isTrash || isJunk ? { type: "delete" } : { type: "trash" }, "!": { type: "spam" } };
+        if (keyAction[e.key]) {
+          e.preventDefault();
+          void act(uids, keyAction[e.key]);
+          return;
+        }
+        if (e.key === "v") {
+          e.preventDefault();
+          setMoving(uids);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSelected(new Set());
+          return;
+        }
+      }
+      if (e.key === "x" && openUid) {
+        e.preventDefault();
+        toggleSelect(openUid, false);
+        return;
+      }
       if (e.key === "j" || e.key === "ArrowDown") {
         const next = messages[i + 1] ?? (i === -1 ? messages[0] : null);
         if (next) {
@@ -166,7 +264,7 @@ export function MailView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [messages, openUid, folder, go, compose]);
+  }, [messages, openUid, folder, go, compose, moving, selected, act, isTrash, isJunk, toggleSelect]);
 
   const sent = useCallback((id: string, undoMs: number, state: SendState) => {
     outgoing.current.set(id, state);
@@ -204,13 +302,25 @@ export function MailView() {
           <h1 className="font-display text-[26px] leading-none">Mails</h1>
           <p className="mt-1.5 truncate text-[12px] text-ink-3" title={info.email}>{info.email}</p>
         </div>
-        {folders.map((f) => (
-          <FolderLink key={f.path} f={f} active={f.path === folder} onClick={() => go(f.path, null)} />
-        ))}
+        <FolderNav folders={folders} current={folder} onOpen={(path) => go(path, null)} onChanged={(next, path) => (setFolders(next), path !== undefined && go(path ?? "INBOX", null))} />
       </nav>
 
       {/* List */}
       <section className={cn("flex min-h-0 w-[380px] shrink-0 flex-col border-r border-line max-lg:w-[340px] max-md:w-full max-md:border-0", openUid && "max-md:hidden")}>
+        {selected.size > 0 ? (
+          <SelectionBar
+            count={selected.size}
+            all={selected.size === messages.length}
+            onAll={() => setSelected(selected.size === messages.length ? new Set() : new Set(messages.map((m) => m.uid)))}
+            onClear={() => setSelected(new Set())}
+            trash={isTrash || isJunk}
+            junk={isJunk}
+            onAction={(a) => void act([...selected], a)}
+            onMove={() => setMoving([...selected])}
+            allSeen={messages.filter((m) => selected.has(m.uid)).every((m) => m.seen)}
+            allFlagged={messages.filter((m) => selected.has(m.uid)).every((m) => m.flagged)}
+          />
+        ) : (
         <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3">
           <select value={folder} onChange={(e) => go(e.target.value, null)} aria-label="Dossier" className="h-8 min-w-0 rounded-lg border border-line-strong bg-surface px-2 text-[13px] lg:hidden">
             {folders.map((f) => (
@@ -233,6 +343,7 @@ export function MailView() {
             <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
           </button>
         </header>
+        )}
         {(info.status === "error" || info.status === "auth") && (
           <div className="flex items-center gap-2 border-b border-line bg-danger/5 px-3 py-2 text-[12.5px]">
             <ShieldAlert className="size-4 shrink-0 text-danger" />
@@ -240,15 +351,226 @@ export function MailView() {
             <Link href="/settings" className="shrink-0 font-medium text-accent">Réglages</Link>
           </div>
         )}
-        <MessageList messages={messages} loading={loading || info.status === "pending" || info.status === "syncing"} hasMore={hasMore} onMore={more} openUid={openUid} fresh={fresh} onOpen={(uid) => go(folder, uid)} />
+        <MessageList
+          messages={messages}
+          loading={loading || info.status === "pending" || info.status === "syncing"}
+          hasMore={hasMore}
+          onMore={more}
+          openUid={openUid}
+          fresh={fresh}
+          selected={selected}
+          onSelect={toggleSelect}
+          onOpen={(uid) => go(folder, uid)}
+        />
       </section>
 
       {/* Reading */}
       <section className={cn("flex min-w-0 flex-1 flex-col", !openUid && "max-md:hidden")}>
-        {openUid ? <Reader key={`${folder}|${openUid}`} folder={folder} uid={openUid} me={info.email} isDrafts={current?.specialUse === "\\Drafts"} composing={!!compose} onCompose={setCompose} onBack={() => go(folder, null)} onSeen={markSeen} /> : <EmptyReader count={current?.unread ?? 0} />}
+        {openUid ? <Reader
+            key={`${folder}|${openUid}`}
+            folder={folder}
+            uid={openUid}
+            me={info.email}
+            isDrafts={current?.specialUse === "\\Drafts"}
+            trash={isTrash || isJunk}
+            junk={isJunk}
+            busy={!!compose || !!moving || selected.size > 0}
+            onCompose={setCompose}
+            onAction={(a) => void act([openUid], a)}
+            onMove={() => setMoving([openUid])}
+            onBack={() => go(folder, null)}
+            onSeen={markSeen}
+          /> : <EmptyReader count={current?.unread ?? 0} />}
       </section>
+      {moving && (
+        <MoveMenu
+          folders={folders.filter((f) => f.path !== folder)}
+          onClose={() => setMoving(null)}
+          onPick={(to) => {
+            const uids = moving;
+            setMoving(null);
+            void act(uids, { type: "move", to });
+          }}
+        />
+      )}
       {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} signature={info.signature} onClose={() => setCompose(null)} onSent={sent} />}
     </div>
+  );
+}
+
+function SelectionBar({
+  count,
+  all,
+  onAll,
+  onClear,
+  trash,
+  junk,
+  onAction,
+  onMove,
+  allSeen,
+  allFlagged,
+}: {
+  count: number;
+  all: boolean;
+  onAll: () => void;
+  onClear: () => void;
+  trash: boolean;
+  junk: boolean;
+  onAction: (a: MailAction) => void;
+  onMove: () => void;
+  allSeen: boolean;
+  allFlagged: boolean;
+}) {
+  return (
+    <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line bg-[color-mix(in_oklab,var(--accent)_7%,transparent)] px-2">
+      <button onClick={onAll} aria-label={all ? "Tout désélectionner" : "Tout sélectionner"} className="press flex size-8 items-center justify-center rounded-lg">
+        <span className={cn("flex size-4 items-center justify-center rounded border", all ? "border-accent bg-accent text-accent-ink" : "border-line-strong bg-surface")}>{all && <Check className="size-3" strokeWidth={3} />}</span>
+      </button>
+      <span className="tabular min-w-0 flex-1 truncate text-[13px] font-medium whitespace-nowrap">
+        {count} sélectionné{count > 1 ? "s" : ""}
+      </span>
+      <Action small label="Archiver (E)" Icon={Archive} onClick={() => onAction({ type: "archive" })} />
+      <Action small label={trash ? "Supprimer définitivement (#)" : "Corbeille (#)"} Icon={Trash2} onClick={() => onAction(trash ? { type: "delete" } : { type: "trash" })} />
+      {junk ? <Action small label="Pas un spam" Icon={ShieldCheck} onClick={() => onAction({ type: "move", to: "INBOX" })} /> : <Action small label="Spam (!)" Icon={ShieldAlert} onClick={() => onAction({ type: "spam" })} />}
+      <Action small label="Déplacer (V)" Icon={FolderInput} onClick={onMove} />
+      <Action small label={allSeen ? "Marquer comme non lus" : "Marquer comme lus"} Icon={allSeen ? Mail : MailOpen} onClick={() => onAction({ type: "seen", value: !allSeen })} />
+      <Action small label={allFlagged ? "Retirer le drapeau" : "Signaler"} Icon={Flag} active={allFlagged} onClick={() => onAction({ type: "flagged", value: !allFlagged })} />
+      <Action small label="Annuler la sélection (Échap)" Icon={X} onClick={onClear} />
+    </header>
+  );
+}
+
+/** "Déplacer vers…": the folders, filtered as one types. */
+function MoveMenu({ folders, onPick, onClose }: { folders: MailFolder[]; onPick: (path: string) => void; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  const list = folders.filter((f) => f.name.toLowerCase().includes(q.trim().toLowerCase()) || f.path.toLowerCase().includes(q.trim().toLowerCase()));
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/20 pt-[15vh]" onMouseDown={onClose}>
+      <div role="dialog" aria-label="Déplacer vers" className="w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-xl border border-line-strong bg-surface shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => (setQ(e.target.value), setActive(0))}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((a) => (a + (e.key === "ArrowDown" ? 1 : list.length - 1)) % Math.max(1, list.length));
+            } else if (e.key === "Enter" && list[active]) {
+              e.preventDefault();
+              onPick(list[active].path);
+            }
+          }}
+          placeholder="Déplacer vers…"
+          className="h-11 w-full border-b border-line bg-transparent px-4 text-[14px] outline-none"
+        />
+        <ul className="scroll-thin max-h-[320px] overflow-y-auto py-1">
+          {list.map((f, i) => {
+            const Icon = (f.specialUse && FOLDER_ICONS[f.specialUse]) || Folder;
+            return (
+              <li key={f.path}>
+                <button onClick={() => onPick(f.path)} onMouseEnter={() => setActive(i)} className={cn("flex w-full items-center gap-2.5 px-4 py-2 text-left text-[13.5px]", i === active && "bg-accent-soft")}>
+                  <Icon className="size-4 shrink-0 text-ink-3" />
+                  <span className="min-w-0 flex-1 truncate">{f.path.split(f.delimiter || "/").join(" › ").replace(/^INBOX$/, f.name)}</span>
+                </button>
+              </li>
+            );
+          })}
+          {!list.length && <li className="px-4 py-3 text-[13px] text-ink-3">Aucun dossier</li>}
+        </ul>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** The folders, with creating, renaming and deleting the person's own ones (on the server). */
+function FolderNav({ folders, current, onOpen, onChanged }: { folders: MailFolder[]; current: string; onOpen: (path: string) => void; onChanged: (folders: MailFolder[], go?: string | null) => void }) {
+  const [editing, setEditing] = useState<{ path: string | null; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const call = async (method: "POST" | "PATCH" | "DELETE", json: Record<string, string>) => {
+    setBusy(true);
+    try {
+      return await api<{ path: string | null; folders: MailFolder[] }>("/api/mail/folders", { method, json });
+    } catch (e) {
+      toast.error((e as Error).message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!editing) return;
+    const name = editing.name.trim();
+    const was = editing.path;
+    setEditing(null);
+    if (!name) return;
+    const r = await call(was ? "PATCH" : "POST", was ? { path: was, name } : { name });
+    if (r) onChanged(r.folders, was === current || !was ? r.path : undefined);
+  };
+
+  const remove = async (f: MailFolder) => {
+    if (!window.confirm(`Supprimer le dossier « ${f.name} » et les ${f.total} mails qu'il contient ? Il disparaît aussi du webmail et de l'iPhone.`)) return;
+    const r = await call("DELETE", { path: f.path });
+    if (r) onChanged(r.folders, f.path === current ? null : undefined);
+  };
+
+  const input = (
+    <input
+      autoFocus
+      value={editing?.name ?? ""}
+      disabled={busy}
+      onChange={(e) => setEditing((x) => (x ? { ...x, name: e.target.value } : x))}
+      onBlur={() => void submit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setEditing(null);
+        }
+      }}
+      aria-label="Nom du dossier"
+      className="h-8 w-full rounded-lg border border-accent bg-surface px-2 text-[13.5px] outline-none"
+    />
+  );
+
+  return (
+    <>
+      {folders.map((f) =>
+        editing?.path === f.path ? (
+          <div key={f.path}>{input}</div>
+        ) : (
+          <div key={f.path} className="group relative">
+            <FolderLink f={f} active={f.path === current} onClick={() => onOpen(f.path)} />
+            {!f.specialUse && (
+              <span className="absolute top-1 right-1 hidden items-center gap-0.5 rounded-md bg-surface-2 group-hover:flex">
+                <button onClick={() => setEditing({ path: f.path, name: f.name })} aria-label={`Renommer ${f.name}`} title="Renommer" className="press flex size-6 items-center justify-center rounded text-ink-3 hover:text-ink">
+                  <Pencil className="size-3.5" />
+                </button>
+                <button onClick={() => void remove(f)} aria-label={`Supprimer ${f.name}`} title="Supprimer" className="press flex size-6 items-center justify-center rounded text-ink-3 hover:text-danger">
+                  <Trash2 className="size-3.5" />
+                </button>
+              </span>
+            )}
+          </div>
+        ),
+      )}
+      {editing && editing.path === null ? (
+        <div className="mt-1">{input}</div>
+      ) : (
+        <button onClick={() => setEditing({ path: null, name: "" })} disabled={busy} className="press mt-1 flex h-8 items-center gap-2.5 rounded-lg px-2 text-[13px] text-ink-3 hover:bg-ink/[0.04] hover:text-ink">
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <FolderPlus className="size-4" />}
+          Nouveau dossier
+        </button>
+      )}
+    </>
   );
 }
 
@@ -268,7 +590,27 @@ function FolderLink({ f, active, onClick }: { f: MailFolder; active: boolean; on
   );
 }
 
-function MessageList({ messages, loading, hasMore, onMore, openUid, fresh, onOpen }: { messages: MailSummary[]; loading: boolean; hasMore: boolean; onMore: () => void; openUid: number | null; fresh: Set<string>; onOpen: (uid: number) => void }) {
+function MessageList({
+  messages,
+  loading,
+  hasMore,
+  onMore,
+  openUid,
+  fresh,
+  selected,
+  onSelect,
+  onOpen,
+}: {
+  messages: MailSummary[];
+  loading: boolean;
+  hasMore: boolean;
+  onMore: () => void;
+  openUid: number | null;
+  fresh: Set<string>;
+  selected: Set<number>;
+  onSelect: (uid: number, range: boolean) => void;
+  onOpen: (uid: number) => void;
+}) {
   const end = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
 
@@ -307,18 +649,34 @@ function MessageList({ messages, loading, hasMore, onMore, openUid, fresh, onOpe
       <ul>
         {messages.map((m) => {
           const active = m.uid === openUid;
+          const checked = selected.has(m.uid);
           return (
-            <li key={m.uid}>
+            <li
+              key={m.uid}
+              className={cn(
+                "group relative border-b border-line transition-colors duration-300",
+                checked ? "bg-[color-mix(in_oklab,var(--accent)_16%,transparent)]" : active ? "bg-accent-soft" : "hover:bg-ink/[0.03]",
+                fresh.has(keyOf(m)) && !active && !checked && "bg-[color-mix(in_oklab,var(--accent)_10%,transparent)]",
+              )}
+            >
+              {/* Select: the box shows on hover, or for all once one is ticked. ⌘/Ctrl-click and Shift-click work too. */}
               <button
-                ref={active ? activeRef : undefined}
-                onClick={() => onOpen(m.uid)}
+                onClick={(e) => onSelect(m.uid, e.shiftKey)}
+                aria-label={checked ? "Désélectionner" : "Sélectionner"}
+                aria-pressed={checked}
                 className={cn(
-                  "relative flex w-full flex-col gap-0.5 border-b border-line px-4 py-2.5 text-left transition-colors duration-300 outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset",
-                  active ? "bg-accent-soft" : "hover:bg-ink/[0.03]",
-                  fresh.has(keyOf(m)) && !active && "bg-[color-mix(in_oklab,var(--accent)_10%,transparent)]",
+                  "absolute top-2.5 left-1 z-[1] flex size-6 items-center justify-center rounded-md max-md:hidden",
+                  selected.size ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
                 )}
               >
-                {!m.seen && <span className="absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent" aria-label="Non lu" />}
+                <span className={cn("flex size-4 items-center justify-center rounded border", checked ? "border-accent bg-accent text-accent-ink" : "border-line-strong bg-surface")}>{checked && <Check className="size-3" strokeWidth={3} />}</span>
+              </button>
+              <button
+                ref={active ? activeRef : undefined}
+                onClick={(e) => (e.metaKey || e.ctrlKey || e.shiftKey || selected.size ? onSelect(m.uid, e.shiftKey) : onOpen(m.uid))}
+                className="relative flex w-full flex-col gap-0.5 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset md:pl-8"
+              >
+                {!m.seen && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
                 <span className="flex items-baseline gap-2">
                   <span className={cn("min-w-0 flex-1 truncate text-[13.5px]", m.seen ? "text-ink-2" : "font-semibold text-ink")}>{who(m.from)}</span>
                   {m.flagged && <Flag className="size-3 shrink-0 self-center fill-danger text-danger" />}
@@ -369,8 +727,12 @@ function Reader({
   uid,
   me,
   isDrafts,
-  composing,
+  trash,
+  junk,
+  busy,
   onCompose,
+  onAction,
+  onMove,
   onBack,
   onSeen,
 }: {
@@ -378,8 +740,14 @@ function Reader({
   uid: number;
   me: string;
   isDrafts: boolean;
-  composing: boolean;
+  /** In the Trash or the Spam: deleting is for good. */
+  trash: boolean;
+  junk: boolean;
+  /** Writing, moving or selecting: the reader's keys are off. */
+  busy: boolean;
   onCompose: (init: ComposeInit) => void;
+  onAction: (action: MailAction) => void;
+  onMove: () => void;
   onBack: () => void;
   onSeen: (uid: number) => void;
 }) {
@@ -419,20 +787,38 @@ function Reader({
     }
   };
 
-  // r: reply, a: reply to all, f: forward.
+  const run = useCallback(
+    (a: MailAction) => {
+      if (a.type === "flagged") setMail((m) => (m ? { ...m, flagged: a.value } : m));
+      onAction(a);
+      // Unread again: back to the list, or opening it would mark it read at once.
+      if (a.type === "seen" && !a.value) onBack();
+    },
+    [onAction, onBack],
+  );
+
+  // r / a / f: reply, reply to all, forward. e: archive, #: trash, u: unread, s: flag, v: move, !: spam.
   useEffect(() => {
-    if (!mail || composing) return;
+    if (!mail || busy) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
       const mode = ({ r: "reply", a: "replyAll", f: "forward" } as Record<string, ComposeMode>)[e.key];
-      if (!mode) return;
-      e.preventDefault();
-      onCompose(composeFrom(mail, mode, me));
+      const action = ({ e: { type: "archive" }, "#": trash ? { type: "delete" } : { type: "trash" }, Delete: trash ? { type: "delete" } : { type: "trash" }, u: { type: "seen", value: false }, s: { type: "flagged", value: !mail.flagged }, "!": junk ? { type: "move", to: "INBOX" } : { type: "spam" } } as Record<string, MailAction>)[e.key];
+      if (mode && !isDrafts) {
+        e.preventDefault();
+        onCompose(composeFrom(mail, mode, me));
+      } else if (action) {
+        e.preventDefault();
+        run(action);
+      } else if (e.key === "v") {
+        e.preventDefault();
+        onMove();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mail, composing, me, onCompose]);
+  }, [mail, busy, me, onCompose, run, onMove, trash, junk, isDrafts]);
 
   const back = (
     <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
@@ -461,10 +847,21 @@ function Reader({
     <article className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line px-3 md:px-6">
         {back}
-        <span className="min-w-0 truncate text-[12px] text-ink-3">
+        <span className="min-w-0 truncate text-[12px] text-ink-3 max-sm:hidden">
           {new Date(mail.date).toLocaleString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
         </span>
         <span className="flex-1" />
+        <Action label="Archiver (E)" Icon={Archive} onClick={() => run({ type: "archive" })} />
+        {trash ? (
+          <Action label="Supprimer définitivement (#)" Icon={Trash2} onClick={() => run({ type: "delete" })} />
+        ) : (
+          <Action label="Corbeille (#)" Icon={Trash2} onClick={() => run({ type: "trash" })} />
+        )}
+        {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} />}
+        <Action label="Déplacer (V)" Icon={FolderInput} onClick={onMove} />
+        <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} />
+        <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
+        <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
         {isDrafts ? (
           <button onClick={() => onCompose(composeFrom(mail, "draft", me))} className="press flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-[12.5px] font-medium text-accent-ink">
             <PencilLine className="size-3.5" /> Reprendre
@@ -541,7 +938,7 @@ function Reader({
               {mail.remoteImages && !(showImages || mail.trusted) && (
                 <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
                   <ShieldAlert className="size-4 shrink-0 text-ink-3" />
-                  <span className="min-w-0 flex-1">Images bloquées : elles peuvent dire à l&apos;expéditeur quand et où tu ouvres ce mail.</span>
+                  <span className="min-w-[12rem] flex-1">Images bloquées : elles peuvent dire à l&apos;expéditeur quand et où tu ouvres ce mail.</span>
                   <button onClick={() => setShowImages(true)} className="press font-medium text-accent hover:underline">
                     Afficher les images
                   </button>
@@ -581,9 +978,9 @@ function Reader({
   );
 }
 
-function Action({ label, Icon, onClick, active }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean }) {
+function Action({ label, Icon, onClick, active, small }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean; small?: boolean }) {
   return (
-    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex size-8 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", active ? "text-accent" : "text-ink-3")}>
+    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex shrink-0 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", small ? "size-7" : "size-8", active ? "text-accent" : "text-ink-3")}>
       <Icon className="size-4" />
     </button>
   );

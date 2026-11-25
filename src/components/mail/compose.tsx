@@ -2,6 +2,7 @@
 
 import { Bold, File as FileIcon, Italic, Link2, List, ListOrdered, Loader2, Paperclip, Quote, Send, Trash2, Underline, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { REMOTE_SRC } from "@/lib/mail-frame";
 import type { ComposeMode, MailAddress, MailAttachment, MailContent } from "@/lib/types";
@@ -244,7 +245,8 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
 
   const title = { new: "Nouveau mail", reply: "Répondre", replyAll: "Répondre à tous", forward: "Transférer", draft: "Brouillon" }[init.mode];
 
-  return (
+  // Above everything, the app bar included (on a phone it takes the whole screen).
+  return createPortal(
     <div
       role="dialog"
       aria-label={title}
@@ -383,7 +385,8 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
         <Tool label="Supprimer le brouillon" onClick={() => void discard()} Icon={Trash2} />
       </footer>
       {dragging && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-accent/10 text-[14px] font-medium text-accent">Dépose les fichiers pour les joindre</div>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

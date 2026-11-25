@@ -7,7 +7,7 @@ import type { ComposeMode, MailAddress } from "@/lib/types";
 import { readPart } from "./attachment";
 import { openMail } from "./body";
 import { buildMessage, envelopeOf, forwardHtml, quoteHtml, signatureHtml, type OutFile, type Outgoing } from "./compose";
-import { imapClient, mailError, smtpTransport } from "./connect";
+import { imapClient, mailError, MailProblem, smtpTransport } from "./connect";
 import { settingsFor, syncNow } from "./service";
 import * as store from "./store";
 
@@ -58,7 +58,7 @@ const defaults: Deps = {
 /** The full mail: what was written, the signature, the quote or the forwarded mail, the files. */
 export async function prepare(userId: string, fromName: string, draft: Draft, files: OutFile[], deps: Deps = defaults, withSignature = true): Promise<Outgoing> {
   const account = store.mailAccountInfo(userId);
-  if (!account) throw new Error("Aucune boîte mail branchée");
+  if (!account) throw new MailProblem("Aucune boîte mail branchée");
   const out: Outgoing = {
     from: { name: fromName, address: account.email },
     to: draft.to,
@@ -72,7 +72,7 @@ export async function prepare(userId: string, fromName: string, draft: Draft, fi
 
   if (draft.ref && (draft.mode === "reply" || draft.mode === "replyAll" || draft.mode === "forward")) {
     const original = await openMail(userId, draft.ref.folder, draft.ref.uid, deps.imap);
-    if (!original) throw new Error("Le mail d'origine n'existe plus (supprimé ou déplacé ailleurs)");
+    if (!original) throw new MailProblem("Le mail d'origine n'existe plus (supprimé ou déplacé ailleurs)");
     if (draft.mode === "forward") tail += forwardHtml(original);
     else {
       tail += quoteHtml(original);
@@ -96,7 +96,7 @@ export async function prepare(userId: string, fromName: string, draft: Draft, fi
       if (file) out.files.push({ name: file.name, type: file.type, data: file.data });
     }
   }
-  if (out.files.reduce((n, f) => n + f.data.length, 0) > MAX_FILES_BYTES) throw new Error("Pièces jointes trop lourdes (25 Mo au plus en tout)");
+  if (out.files.reduce((n, f) => n + f.data.length, 0) > MAX_FILES_BYTES) throw new MailProblem("Pièces jointes trop lourdes (25 Mo au plus en tout)");
   return out;
 }
 
@@ -105,11 +105,11 @@ export async function deliver(userId: string, draft: Draft, out: Outgoing, deps:
   out.messageId ??= `<${crypto.randomUUID()}@${out.from.address.split("@")[1] ?? "lamio"}>`;
   out.date ??= new Date();
   const smtp = deps.smtp(userId);
-  if (!smtp) throw new Error("Aucune boîte mail branchée");
+  if (!smtp) throw new MailProblem("Aucune boîte mail branchée");
   try {
     await smtp.sendMail({ envelope: envelopeOf(out), raw: await buildMessage(out, { keepBcc: false }) });
   } catch (e) {
-    throw new Error(mailError(e, "smtp").message);
+    throw new MailProblem(mailError(e, "smtp").message);
   }
 
   const sent = store.specialFolder(userId, "\\Sent");
@@ -182,10 +182,10 @@ export function cancelSend(userId: string, id: string): boolean {
 /** Saves the mail in the mailbox's Drafts (replacing the previous version). Returns where it is. */
 export async function saveDraft(userId: string, draft: Draft, out: Outgoing, deps: Deps = defaults): Promise<{ folder: string; uid: number | null }> {
   const folder = store.specialFolder(userId, "\\Drafts");
-  if (!folder) throw new Error("Cette boîte n'a pas de dossier Brouillons");
+  if (!folder) throw new MailProblem("Cette boîte n'a pas de dossier Brouillons");
   out.date ??= new Date();
   const client = deps.imap(userId);
-  if (!client) throw new Error("Aucune boîte mail branchée");
+  if (!client) throw new MailProblem("Aucune boîte mail branchée");
   client.on("error", () => {});
   try {
     await client.connect();

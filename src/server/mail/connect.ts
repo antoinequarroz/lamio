@@ -73,7 +73,11 @@ export async function checkHost(host: string): Promise<string | null> {
 }
 
 /** A readable reason, in French, for a failed connection. Never contains the password. */
+/** A problem Lamio explains itself (a missing folder, a file too big…): its message is shown as is. */
+export class MailProblem extends Error {}
+
 export function mailError(e: unknown, server: "imap" | "smtp" = "imap"): { message: string; auth: boolean } {
+  if (e instanceof MailProblem) return { message: e.message, auth: false };
   const err = e as { code?: string; authenticationFailed?: boolean; responseCode?: number; responseText?: string; message?: string };
   const label = server === "imap" ? "réception (IMAP)" : "envoi (SMTP)";
   if (err.authenticationFailed || err.code === "EAUTH" || err.code === "AUTHENTICATIONFAILED" || err.responseCode === 535)
