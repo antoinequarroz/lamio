@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/server/auth";
 import { fail, unauthorized } from "@/server/http";
-import { syncNow } from "@/server/mail/service";
+import { isLive, syncNow } from "@/server/mail/service";
 import { mailAccount, mailAccountInfo, setMailStatus } from "@/server/mail/store";
 
 export const dynamic = "force-dynamic";
@@ -15,5 +15,6 @@ export async function POST() {
   // Asked by hand: one more try even after a refused password.
   if (account.status === "auth") setMailStatus(me.id, "pending");
   await syncNow(me.id, { full: true });
-  return NextResponse.json({ account: mailAccountInfo(me.id) });
+  const info = mailAccountInfo(me.id);
+  return NextResponse.json({ account: info && { ...info, live: isLive(me.id) } });
 }

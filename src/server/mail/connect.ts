@@ -27,6 +27,8 @@ export function imapClient(s: MailSettings, options: { autoIdle?: boolean; plain
     auth: { user: s.username, pass: s.password },
     logger: false,
     disableAutoIdle: !options.autoIdle,
+    // The live connection: IDLE right after each command, renewed every 5 min (servers and NAT drop idle ones).
+    ...(options.autoIdle && { autoIdleDelay: 300, maxIdleTime: 5 * 60_000 }),
     connectionTimeout: TIMEOUT,
     greetingTimeout: TIMEOUT,
     clientInfo: { name: "Lamio" },

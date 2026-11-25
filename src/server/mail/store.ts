@@ -32,6 +32,8 @@ const toInfo = (r: AccountRow): MailAccountInfo => ({
   status: r.status,
   lastError: r.last_error,
   syncedAt: r.synced_at,
+  // Known by the mail service only: the routes fill it in.
+  live: false,
 });
 
 const accountRow = (userId: string) => db().prepare("select * from mail_accounts where user_id = ?").get(userId) as AccountRow | undefined;
@@ -243,4 +245,15 @@ export function listMailMessages(userId: string, folder: string, before?: { date
       : db().prepare("select * from mail_messages where user_id = ? and folder = ? order by date desc, uid desc limit ?").all(userId, folder, limit + 1)
   ) as MessageRow[];
   return { messages: rows.slice(0, limit).map(toSummary), hasMore: rows.length > limit };
+}
+
+/** These mails, newest first: what the live update carries to the app. */
+export function mailSummaries(userId: string, folder: string, uids: number[]): MailSummary[] {
+  if (!uids.length) return [];
+  const get = db().prepare("select * from mail_messages where user_id = ? and folder = ? and uid = ?");
+  return uids
+    .map((uid) => get.get(userId, folder, uid) as MessageRow | undefined)
+    .filter((r): r is MessageRow => !!r)
+    .map(toSummary)
+    .sort((a, b) => b.date.localeCompare(a.date) || b.uid - a.uid);
 }

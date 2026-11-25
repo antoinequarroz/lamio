@@ -83,15 +83,22 @@ async function fetchPreviews(client: ImapFlow, userId: string, folder: string, m
   }
 }
 
-/** Syncs one folder. Returns true when something visible changed. */
-export async function syncFolder(client: ImapFlow, userId: string, path: string, unread: number): Promise<boolean> {
+export type FolderSync = { changed: boolean; added: number[] };
+
+/**
+ * Syncs one folder: "changed" when something visible changed, "added" the UIDs of the new mails.
+ * "unread" comes from STATUS when known; null (the folder is the one open, STATUS is not allowed
+ * on it) counts the unread mails with a SEARCH.
+ */
+export async function syncFolder(client: ImapFlow, userId: string, path: string, unread: number | null): Promise<FolderSync> {
   const lock = await client.getMailboxLock(path, { readOnly: true });
   try {
     const box = client.mailbox;
-    if (!box) return false;
+    if (!box) return { changed: false, added: [] };
     const before = store.folderState(userId, path);
     const uidValidity = box.uidValidity.toString();
     let changed = false;
+    let added: number[] = [];
 
     if (before?.uidValidity && before.uidValidity !== uidValidity) {
       store.clearFolderMessages(userId, path);
@@ -110,6 +117,7 @@ export async function syncFolder(client: ImapFlow, userId: string, path: string,
       if (fresh.length) {
         store.insertMessages(userId, path, fresh.map(toRow));
         await fetchPreviews(client, userId, path, fresh);
+        added = fresh.map((m) => m.uid);
         changed = true;
       }
     }
@@ -132,10 +140,14 @@ export async function syncFolder(client: ImapFlow, userId: string, path: string,
       }
     }
 
+    if (unread === null) {
+      const unseen = box.exists > 0 ? await client.search({ seen: false }, { uid: true }) : [];
+      unread = Array.isArray(unseen) ? unseen.length : (before?.unread ?? 0);
+    }
     const state = { uidValidity, uidNext: box.uidNext, highestModseq: box.highestModseq?.toString() ?? null, total: box.exists, unread };
     if (!before || before.total !== state.total || before.unread !== state.unread) changed = true;
     store.updateFolderState(userId, path, state);
-    return changed;
+    return { changed, added };
   } finally {
     lock.release();
   }
@@ -168,7 +180,7 @@ export async function syncMailbox(client: ImapFlow, userId: string, options: { f
       (s.highestModseq !== undefined && prev.highestModseq !== s.highestModseq.toString());
     if (!moved && !options.full) continue;
     try {
-      if (await syncFolder(client, userId, f.path, s?.unseen ?? 0)) changed.push(f.path);
+      if ((await syncFolder(client, userId, f.path, s?.unseen ?? 0)).changed) changed.push(f.path);
     } catch (e) {
       // A folder deleted meanwhile, or one the server refuses to open: the others still sync.
       if (!client.usable) throw e;

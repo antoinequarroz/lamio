@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, Loader2, Mail, RefreshCw, TriangleAlert, Unplug } from "lucide-react";
+import { CheckCircle2, ChevronDown, Loader2, Mail, RefreshCw, TriangleAlert, Unplug, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button, Card, Field, inputClass } from "@/components/ui";
@@ -134,6 +134,12 @@ function MailStatusCard({ account, folders, onEdit, onChange }: { account: MailA
           )}
         </div>
       </div>
+      {account.status === "ok" && (
+        <p className="-mt-1 flex items-center gap-1.5 text-[12.5px] text-ink-3">
+          <Zap className={cn("size-3.5", account.live ? "text-accent" : "text-ink-3")} />
+          {account.live ? "Temps réel : un nouveau mail arrive ici en une ou deux secondes." : "Temps réel en cours de connexion…"}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button onClick={sync} disabled={busy !== null}>
           <RefreshCw className={cn("size-4", busy === "sync" && "animate-spin")} />

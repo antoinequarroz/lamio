@@ -3,19 +3,22 @@ import { publish } from "@/server/events";
 import { imapClient, mailError, type MailSettings } from "./connect";
 import { decryptSecret, mailEnabled } from "./secret";
 import * as store from "./store";
+import { INBOX, InboxWatcher } from "./live";
 import { syncMailbox } from "./sync";
 
 /*
  * Keeps each plugged-in mailbox in sync, in the server process (like the live updates of
- * server/events.ts): a pass every SYNC_EVERY, and right away when asked (plugging in, "Synchroniser").
- *
- * This is the first step: a connection per pass. The permanent IMAP IDLE connection that brings a
- * mail in within a second or two comes next (LAMIO-301) and plugs into syncNow().
+ * server/events.ts), in two ways:
+ * - the inbox in real time: a permanent IMAP IDLE connection (live.ts), a new mail is in the app
+ *   within a second or two, and what is done elsewhere (read on the iPhone, deleted in the
+ *   webmail) shows up just as fast;
+ * - the whole mailbox (the other folders, new or deleted folders): a pass every SYNC_EVERY on a
+ *   short connection, and right away when asked (plugging in, "Synchroniser").
  */
 
-export const SYNC_EVERY = 2 * 60_000;
+export const SYNC_EVERY = 60_000;
 
-type Runner = { timer: ReturnType<typeof setInterval>; running: Promise<void> | null; again: boolean; full: boolean };
+type Runner = { timer: ReturnType<typeof setInterval>; running: Promise<void> | null; again: boolean; full: boolean; watcher: InboxWatcher };
 
 const globalForMail = globalThis as unknown as { __mailRunners?: Map<string, Runner> };
 const runners = (globalForMail.__mailRunners ??= new Map());
@@ -49,7 +52,10 @@ async function pass(userId: string, full: boolean) {
     // Unplugged during the pass: nothing to report.
     if (!store.mailAccount(userId)) return;
     store.setMailStatus(userId, "ok");
-    if (folders.length || account.status !== "ok") publish({ type: "mail", status: "ok", folders }, [userId]);
+    // Back from a refused password or a long outage: the live connection starts again too.
+    const r = runners.get(userId);
+    if (r && !r.watcher.live) r.watcher.start();
+    if (folders.length || account.status !== "ok") publish({ type: "mail", status: "ok", folders, live: isLive(userId) }, [userId]);
   } catch (e) {
     if (!store.mailAccount(userId)) return;
     const { message, auth } = mailError(e);
@@ -82,6 +88,24 @@ export function syncNow(userId: string, options: { full?: boolean } = {}): Promi
   return r.running;
 }
 
+function watcherFor(userId: string) {
+  return new InboxWatcher(
+    userId,
+    () => {
+      const settings = settingsFor(userId);
+      return settings ? imapClient(settings, { autoIdle: true }) : null;
+    },
+    {
+      onChange: (added) => publish({ type: "mail", status: "ok", folders: [INBOX], live: true, added: store.mailSummaries(userId, INBOX, added) }, [userId]),
+      onState: (live, error) => {
+        if (!store.mailAccount(userId)) return;
+        if (error?.auth) store.setMailStatus(userId, "auth", error.message);
+        publish({ type: "mail", status: error?.auth ? "auth" : (store.mailAccount(userId)?.status ?? "ok"), folders: [], live }, [userId]);
+      },
+    },
+  );
+}
+
 /** Starts syncing this person's mailbox (no-op if it already runs, or without MAIL_SECRET). */
 export function start(userId: string): Runner | null {
   if (!mailEnabled()) return null;
@@ -89,8 +113,10 @@ export function start(userId: string): Runner | null {
   if (existing) return existing;
   const timer = setInterval(() => void syncNow(userId), SYNC_EVERY);
   timer.unref?.();
-  const r: Runner = { timer, running: null, again: false, full: false };
+  const watcher = watcherFor(userId);
+  const r: Runner = { timer, running: null, again: false, full: false, watcher };
   runners.set(userId, r);
+  if (store.mailAccount(userId)?.status !== "auth") watcher.start();
   return r;
 }
 
@@ -98,8 +124,18 @@ export function stop(userId: string) {
   const r = runners.get(userId);
   if (!r) return;
   clearInterval(r.timer);
+  void r.watcher.stop();
   runners.delete(userId);
 }
+
+/** New settings (another mailbox, a new password): everything reconnects with them. */
+export function restart(userId: string) {
+  stop(userId);
+  return start(userId);
+}
+
+/** The real-time connection of this mailbox is open. */
+export const isLive = (userId: string) => runners.get(userId)?.watcher.live ?? false;
 
 let started = false;
 
