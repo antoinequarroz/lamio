@@ -65,9 +65,66 @@ export type ModuleInfo = {
   allowed?: boolean;
   /** With single sign-on, for admins: the members who may open it. */
   allowedIds?: string[];
+  /** Shown inside this app as well (Alfred's calendar in the Calendrier tab). Access is managed like single sign-on. */
+  embedded?: boolean;
 };
 
-export type AppState = { me: User; users: User[]; conversations: Conversation[]; modules: ModuleInfo[] };
+export type AppState = {
+  me: User;
+  users: User[];
+  conversations: Conversation[];
+  modules: ModuleInfo[];
+  /** The Calendrier tab (Alfred's calendar): whether I see it. */
+  calendar: boolean;
+};
+
+export type CalendarSource = "local" | "caldav";
+
+export type RepeatRule = "none" | "daily" | "weekly" | "monthly" | "yearly" | "custom";
+
+/** A calendar of Alfred. */
+export type CalendarInfo = { id: string; name: string; color: string; source: CalendarSource; visible: boolean; readOnly: boolean };
+
+/** One occurrence of an event (a recurring event gives several). */
+export type CalendarEvent = {
+  /** Unique within a response: the event and its occurrence. */
+  key: string;
+  /** The event in Alfred. */
+  id: string;
+  /** For a recurring event: which occurrence (its original start). */
+  occurrenceId: string | null;
+  /** The simple repeat rule, or "custom" for one Alfred cannot sum up. */
+  repeat: RepeatRule;
+  calendarId: string;
+  title: string;
+  /** ISO instant, or a date (YYYY-MM-DD) for an all-day event, end excluded. */
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string;
+  description: string;
+  recurring: boolean;
+};
+
+export type CalendarData = {
+  alfredUrl: string;
+  /** Lamio may create and edit events (its token of Alfred allows writing). */
+  writable: boolean;
+  calendars: CalendarInfo[];
+  events: CalendarEvent[];
+};
+
+/** What the Calendrier tab sends to create or edit an event. Dates for all-day events, end excluded. */
+export type EventInput = {
+  calendarId: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string;
+  description: string;
+  repeat: RepeatRule;
+};
 
 /** What the server pushes over /api/events. */
 export type ServerEvent =

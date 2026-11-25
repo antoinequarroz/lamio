@@ -11,7 +11,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!me) return unauthorized();
   if (me.role !== "admin") return fail("Réservé aux administrateurs", 403);
   const { id } = await params;
-  if (!listModules().some((m) => m.id === id && m.sso)) return fail("Module introuvable", 404);
+  if (!listModules().some((m) => m.id === id && (m.sso || m.embedded))) return fail("Module introuvable", 404);
   const data = await body(req);
   const user = typeof data.userId === "string" ? getUser(data.userId) : null;
   if (!user || typeof data.allowed !== "boolean") return fail("Demande invalide");

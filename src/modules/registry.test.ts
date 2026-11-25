@@ -12,6 +12,12 @@ describe("modules", () => {
     expect(modules.find((m) => m.name === "Cairn")?.sso).toBeUndefined();
   });
 
+  it("Alfred s'affiche aussi dans Lamio (onglet Calendrier) quand son jeton est donné", () => {
+    const alfred = (env: Record<string, string>) => listModules(env).find((m) => m.id === "agenda");
+    expect(alfred({ ALFRED_URL: "https://alfred.exemple.ch" })?.embedded).toBeUndefined();
+    expect(alfred({ ALFRED_URL: "https://alfred.exemple.ch", ALFRED_API_TOKEN: "alfw_" + "x".repeat(43) })).toMatchObject({ status: "linked", embedded: true });
+  });
+
   it("la connexion unique demande une adresse et un vrai secret", () => {
     expect(ssoClient("cairn", { CAIRN_URL: "https://cairn.exemple.ch", CAIRN_SSO_SECRET: SECRET })).toMatchObject({ id: "notes", name: "Cairn", url: "https://cairn.exemple.ch" });
     expect(listModules({ CAIRN_URL: "https://cairn.exemple.ch", CAIRN_SSO_SECRET: SECRET }).find((m) => m.name === "Cairn")?.sso).toBe(true);
