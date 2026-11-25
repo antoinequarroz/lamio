@@ -204,6 +204,17 @@ export function db() {
   conn.exec("create index if not exists mail_messages_mid on mail_messages (user_id, message_id)");
   // A video call started in the conversation (its room lives in Alfred): {"slug","title"} as JSON.
   addColumn("messages", "call", "text");
+  // Mails, sorted inbox: what the headers say a mail is (null: not read yet), and how to leave its list.
+  addColumn("mail_messages", "kind", "text");
+  addColumn("mail_messages", "unsubscribe", "text");
+  // "Toujours dans Important / Newsletters / Notifications" for a sender.
+  conn.exec(`create table if not exists mail_sender_rules (
+    user_id text not null references users (id) on delete cascade,
+    address text not null,
+    category text not null,
+    created_at text not null,
+    primary key (user_id, address)
+  )`);
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;

@@ -9,12 +9,16 @@ import * as store from "./store";
  * push to the iPhone app. The open app (web, Mac) is told through the live event ("alert").
  */
 
-/** The new mails worth a notification: unread, not from me, and from a known sender when asked. */
+/** The new mails worth a notification: unread, not from me, and only Important ones or known senders when asked. */
 export function mailsToAlert(userId: string, mails: MailSummary[]): MailSummary[] {
   const account = store.mailAccountInfo(userId);
   if (!account || account.notify === "off") return [];
   const me = account.email.toLowerCase();
-  return mails.filter((m) => !m.seen && m.from.address.toLowerCase() !== me && (account.notify === "all" || store.isKnownSender(userId, m.from.address)));
+  const wanted = (m: MailSummary) =>
+    account.notify === "all" ||
+    (account.notify === "known" && store.isKnownSender(userId, m.from.address)) ||
+    (account.notify === "important" && (m.category ?? "important") === "important");
+  return mails.filter((m) => !m.seen && m.from.address.toLowerCase() !== me && wanted(m));
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);

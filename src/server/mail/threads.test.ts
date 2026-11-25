@@ -94,10 +94,10 @@ describe("fils de conversation", () => {
 
   it("une réponse arrivée avant le mail qu'elle cite rejoint le fil quand il arrive ; les anciens mails reçoivent leur fil", () => {
     store.insertMessages(userId, "INBOX", [
-      { uid: 90, messageId: "<r@y.ch>", inReplyTo: "<o@y.ch>", references: "<o@y.ch>", subject: "Re: Photos", from: { name: "Ana", address: "ana@y.ch" }, to: [], cc: [], date: "2026-11-24T10:00:00Z", seen: false, flagged: false, answered: false, attachments: false, size: 1 },
+      { uid: 90, messageId: "<r@y.ch>", inReplyTo: "<o@y.ch>", references: "<o@y.ch>", subject: "Re: Photos", from: { name: "Ana", address: "ana@y.ch" }, to: [], cc: [], date: "2026-11-24T10:00:00Z", seen: false, flagged: false, answered: false, attachments: false, size: 1, kind: "", unsubscribe: null },
     ]);
     store.insertMessages(userId, "INBOX", [
-      { uid: 91, messageId: "<o@y.ch>", inReplyTo: null, references: null, subject: "Photos", from: { name: "Ana", address: "ana@y.ch" }, to: [], cc: [], date: "2026-11-24T09:00:00Z", seen: true, flagged: false, answered: false, attachments: false, size: 1 },
+      { uid: 91, messageId: "<o@y.ch>", inReplyTo: null, references: null, subject: "Photos", from: { name: "Ana", address: "ana@y.ch" }, to: [], cc: [], date: "2026-11-24T09:00:00Z", seen: true, flagged: false, answered: false, attachments: false, size: 1, kind: "", unsubscribe: null },
     ]);
     expect(store.threadMessages(userId, "INBOX", 91).map((m) => m.uid)).toEqual([91, 90]);
     expect(store.baseSubject("TR: Re: [Lamio] AW: Devis  tournage")).toBe("devis tournage");

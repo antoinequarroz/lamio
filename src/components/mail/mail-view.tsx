@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MailX, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,12 +13,24 @@ import { ResizeHandle } from "@/components/resize-handle";
 import { Avatar, Button, Card, Kbd } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { useStored } from "@/lib/use-stored";
-import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
+import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailCategory, MailContent, MailFolder, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
 const THREADS_KEY = "mail-threads";
 const LAYOUT = { folders: 208, list: 380, foldersHidden: false };
+
+/** The tabs of the sorted inbox; "all" turns the sorting off. */
+type InboxTab = MailCategory | "all";
+const TABS: { id: InboxTab; label: string }[] = [
+  { id: "important", label: "Important" },
+  { id: "newsletter", label: "Newsletters" },
+  { id: "notification", label: "Notifications" },
+  { id: "all", label: "Tout" },
+];
+const CATEGORY_NAME: Record<MailCategory, string> = { important: "Important", newsletter: "Newsletters", notification: "Notifications" };
+const isTab = (v: unknown): v is InboxTab => TABS.some((t) => t.id === v);
+type Page = { messages: MailSummary[]; hasMore: boolean; categories?: Record<MailCategory, number> };
 
 const FOLDER_ICONS: Record<string, typeof Inbox> = { "\\Inbox": Inbox, "\\Sent": Send, "\\Drafts": FileText, "\\Archive": Archive, "\\Junk": ShieldAlert, "\\Trash": Trash2, "\\Flagged": Flag };
 
@@ -81,6 +93,10 @@ export function MailView() {
       return !t;
     });
   }, []);
+  // The sorted inbox: the tab shown (kept on this device) and the unread mails of each tab.
+  const [tab, setTab] = useStored<InboxTab>("mail-tab", "important", isTab);
+  const [categories, setCategories] = useState<Record<MailCategory, number> | null>(null);
+  const tabQuery = useCallback((path: string) => (path === "INBOX" && tab !== "all" ? `&category=${tab}` : ""), [tab]);
   // Mails waiting to leave or just sent: to reopen them on "Annuler" or when sending failed.
   const outgoing = useRef(new Map<string, SendState>());
 
@@ -111,12 +127,13 @@ export function MailView() {
 
   const loadMessages = useCallback(
     async (path: string, limit = PAGE) => {
-      const r = await api<{ messages: MailSummary[]; hasMore: boolean }>(`/api/mail/messages?folder=${encodeURIComponent(path)}&limit=${Math.min(200, limit)}${threaded ? "&threads=1" : ""}`);
+      const r = await api<Page>(`/api/mail/messages?folder=${encodeURIComponent(path)}&limit=${Math.min(200, limit)}${threaded ? "&threads=1" : ""}${tabQuery(path)}`);
       setMessages(r.messages);
       setHasMore(r.hasMore);
+      setCategories(r.categories ?? null);
       setLoading(false);
     },
-    [threaded],
+    [threaded, tabQuery],
   );
 
   useEffect(() => {
@@ -161,10 +178,10 @@ export function MailView() {
   const more = useCallback(async () => {
     const last = messages.at(-1);
     if (!last || !hasMore) return;
-    const r = await api<{ messages: MailSummary[]; hasMore: boolean }>(`/api/mail/messages?folder=${encodeURIComponent(folder)}&before=${encodeURIComponent(`${last.date}|${last.uid}`)}${threaded ? "&threads=1" : ""}`);
+    const r = await api<Page>(`/api/mail/messages?folder=${encodeURIComponent(folder)}&before=${encodeURIComponent(`${last.date}|${last.uid}`)}${threaded ? "&threads=1" : ""}${tabQuery(folder)}`);
     setMessages((m) => [...m, ...r.messages.filter((x) => !m.some((y) => y.uid === x.uid))]);
     setHasMore(r.hasMore);
-  }, [messages, hasMore, folder, threaded]);
+  }, [messages, hasMore, folder, threaded, tabQuery]);
 
   // Search: the local copy at once, then the mailbox itself (full text, old mails) to complete.
   const searchKey = search && (search.q.trim() || search.unread || search.attachments || search.within) ? JSON.stringify(search) : "";
@@ -551,6 +568,7 @@ export function MailView() {
           </button>
         </header>
         )}
+        {!search && folder === "INBOX" && <InboxTabs tab={tab} counts={categories} onChange={setTab} />}
         {(info.status === "error" || info.status === "auth") && (
           <div className="flex items-center gap-2 border-b border-line bg-danger/5 px-3 py-2 text-[12.5px]">
             <ShieldAlert className="size-4 shrink-0 text-danger" />
@@ -580,6 +598,7 @@ export function MailView() {
             onMore={more}
             open={openUid ? { folder, uid: openUid } : null}
             fresh={fresh}
+            empty={folder === "INBOX" && tab !== "all" ? `Rien dans ${CATEGORY_NAME[tab]}.` : undefined}
             selected={selected}
             onSelect={toggleSelect}
             onOpen={(m) => go(folder, m.uid)}
@@ -1237,6 +1256,7 @@ function Reader({
                 m.folder === folder && m.uid === uid ? (
                   <li key={keyOf(m)} className="rounded-xl border border-line-strong bg-surface p-4 max-md:p-3">
                     <MailHead mail={mail} date />
+                    {folder === "INBOX" && <SortBar mail={mail} onChange={(category) => setMail((m) => (m ? { ...m, category } : m))} />}
                     <MailBody mail={mail} onChange={setMail} />
                   </li>
                 ) : (
@@ -1248,6 +1268,7 @@ function Reader({
             <>
               <div className="mt-4">
                 <MailHead mail={mail} />
+                {folder === "INBOX" && <SortBar mail={mail} onChange={(category) => setMail((m) => (m ? { ...m, category } : m))} />}
               </div>
               <MailBody mail={mail} onChange={setMail} />
             </>
@@ -1255,6 +1276,101 @@ function Reader({
         </div>
       </div>
     </article>
+  );
+}
+
+/** Important / Newsletters / Notifications above the list of the inbox, with their unread mails. */
+function InboxTabs({ tab, counts, onChange }: { tab: InboxTab; counts: Record<MailCategory, number> | null; onChange: (t: InboxTab) => void }) {
+  return (
+    <div role="tablist" aria-label="Boîte triée" className="scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-line px-2 py-1.5">
+      {TABS.map((t) => {
+        const n = t.id !== "all" ? (counts?.[t.id] ?? 0) : 0;
+        const on = t.id === tab;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={on}
+            onClick={() => onChange(t.id)}
+            className={cn("press flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] whitespace-nowrap", on ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}
+          >
+            {t.label}
+            {n > 0 && <span className={cn("tabular rounded-full px-1.5 text-[11px] leading-[18px]", on ? "bg-accent text-accent-ink" : "bg-ink/[0.07] text-ink-2")}>{n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Where the sorted inbox puts this sender ("Toujours dans …"), and leaving its mailing list. */
+function SortBar({ mail, onChange }: { mail: MailContent; onChange: (c: MailCategory) => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const category = mail.category ?? "important";
+  const who = mail.from.name || mail.from.address;
+  useEffect(() => {
+    if (!confirm) return;
+    const t = setTimeout(() => setConfirm(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirm]);
+
+  const move = async (next: MailCategory) => {
+    if (next === category || !mail.from.address) return;
+    onChange(next);
+    try {
+      await api("/api/mail/sender-rule", { method: "PUT", json: { address: mail.from.address, category: next } });
+      toast.success(`Les mails de ${who} iront dans ${CATEGORY_NAME[next]}`);
+    } catch (e) {
+      onChange(category);
+      toast.error((e as Error).message);
+    }
+  };
+  const leave = async () => {
+    if (!confirm) return setConfirm(true);
+    setBusy(true);
+    try {
+      const r = await api<{ done?: "web" | "mail"; open?: string }>("/api/mail/unsubscribe", { method: "POST", json: { folder: mail.folder, uid: mail.uid } });
+      if (r.open) {
+        window.open(r.open, "_blank", "noopener,noreferrer");
+        toast("La page de désabonnement s'est ouverte", { description: "Termine là-bas si elle demande une confirmation." });
+      } else toast.success(`Désabonné de ${who}`, { description: r.done === "mail" ? "La demande est partie par mail." : undefined });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+      setConfirm(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3">
+      <label className="flex items-center gap-1.5">
+        <span>Classé dans</span>
+        <select
+          value={category}
+          onChange={(e) => void move(e.target.value as MailCategory)}
+          title={`Toujours ranger les mails de ${mail.from.address}`}
+          className="h-7 rounded-md border border-line-strong bg-surface px-1.5 text-[12.5px] text-ink"
+        >
+          {(Object.keys(CATEGORY_NAME) as MailCategory[]).map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_NAME[c]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {mail.unsubscribe && (
+        <button
+          onClick={() => void leave()}
+          disabled={busy}
+          className={cn("press flex h-7 items-center gap-1.5 rounded-md border px-2.5", confirm ? "border-danger/40 bg-danger/10 font-medium text-danger" : "border-line-strong bg-surface text-ink-2 hover:text-ink")}
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <MailX className="size-3.5" />}
+          {confirm ? "Confirmer le désabonnement" : "Se désabonner"}
+        </button>
+      )}
+    </div>
   );
 }
 

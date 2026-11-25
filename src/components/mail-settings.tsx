@@ -182,6 +182,7 @@ function SignatureField({ initial }: { initial: string }) {
 
 const NOTIFY: { value: MailNotify; label: string }[] = [
   { value: "all", label: "Tous les mails" },
+  { value: "important", label: "Important" },
   { value: "known", label: "Contacts connus" },
   { value: "off", label: "Aucun" },
 ];
@@ -202,7 +203,7 @@ function NotifyField({ initial }: { initial: MailNotify }) {
     // Not a <Field>: its <label> would pass every click inside to the first button.
     <div className="flex flex-col gap-1.5">
       <span className="text-[12px] font-medium text-ink-2">Notifier un nouveau mail</span>
-      <div role="radiogroup" aria-label="Notifier un nouveau mail" className="flex w-fit rounded-lg border border-line-strong p-0.5">
+      <div role="radiogroup" aria-label="Notifier un nouveau mail" className="flex w-fit max-w-full flex-wrap rounded-lg border border-line-strong p-0.5">
         {NOTIFY.map((o) => (
           <button
             key={o.value}
@@ -215,7 +216,7 @@ function NotifyField({ initial }: { initial: MailNotify }) {
           </button>
         ))}
       </div>
-      <span className="text-[11.5px] text-ink-3">« Contacts connus » : seulement les personnes à qui tu as déjà écrit. Vaut pour ce navigateur, l&apos;app Mac et l&apos;iPhone.</span>
+      <span className="text-[11.5px] text-ink-3">« Important » : l&apos;onglet Important de la boîte triée. « Contacts connus » : seulement les personnes à qui tu as déjà écrit. Vaut pour ce navigateur, l&apos;app Mac et l&apos;iPhone.</span>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import "server-only";
 import type { FetchMessageObject, ImapFlow, ListResponse, MessageAddressObject } from "imapflow";
 import type { MailAddress } from "@/lib/types";
 import { hasAttachments, makePreview, previewPart, type StructureNode } from "./preview";
+import { classifyHeaders, parseUnsubscribe } from "./sort";
 import * as store from "./store";
 
 /*
@@ -36,6 +37,16 @@ function header(raw: Buffer | undefined, name: string): string | null {
   return m ? m[1].trim().slice(0, 4000) || null : null;
 }
 
+/** The headers read with each mail: the conversation, and what the sorted inbox needs. */
+const HEADERS = ["references", "list-unsubscribe", "list-unsubscribe-post", "list-id", "precedence", "auto-submitted"];
+
+function sortInfo(raw: Buffer | undefined, from: string) {
+  return {
+    kind: classifyHeaders(from, { listUnsubscribe: header(raw, "list-unsubscribe"), listId: header(raw, "list-id"), precedence: header(raw, "precedence"), autoSubmitted: header(raw, "auto-submitted") }),
+    unsubscribe: parseUnsubscribe(header(raw, "list-unsubscribe"), header(raw, "list-unsubscribe-post")),
+  };
+}
+
 function toRow(m: FetchMessageObject): store.MailRow {
   const env = m.envelope ?? {};
   const from = address(env.from)[0] ?? address(env.sender)[0] ?? { name: "", address: "" };
@@ -53,6 +64,7 @@ function toRow(m: FetchMessageObject): store.MailRow {
     ...flagsOf(m.flags),
     attachments: hasAttachments(m.bodyStructure as StructureNode | undefined),
     size: m.size ?? 0,
+    ...sortInfo(m.headers, from.address),
   };
 }
 
@@ -110,7 +122,7 @@ export async function syncFolder(client: ImapFlow, userId: string, path: string,
     if (box.exists > 0) {
       const range = known.max > 0 ? `${known.max + 1}:*` : `${Math.max(1, box.exists - INITIAL_LIMIT + 1)}:*`;
       const fresh: FetchMessageObject[] = [];
-      for await (const m of client.fetch(range, { uid: true, flags: true, envelope: true, internalDate: true, size: true, bodyStructure: true, headers: ["references"] }, { uid: known.max > 0 })) {
+      for await (const m of client.fetch(range, { uid: true, flags: true, envelope: true, internalDate: true, size: true, bodyStructure: true, headers: HEADERS }, { uid: known.max > 0 })) {
         // "n:*" always returns the newest mail, even when its UID is below n.
         if (m.uid > known.max) fresh.push(m);
       }
@@ -119,6 +131,20 @@ export async function syncFolder(client: ImapFlow, userId: string, path: string,
         await fetchPreviews(client, userId, path, fresh);
         added = fresh.map((m) => m.uid);
         changed = true;
+      }
+    }
+
+    // The inbox mails synced before the sorted inbox existed: their headers are read once.
+    if (store.isInbox(userId, path)) {
+      const unsorted = store.unsortedUids(userId, path);
+      if (unsorted.length) {
+        const kinds = new Map<number, ReturnType<typeof sortInfo>>();
+        for await (const m of client.fetch(unsorted, { uid: true, envelope: true, headers: HEADERS }, { uid: true })) {
+          const env = m.envelope ?? {};
+          kinds.set(m.uid, sortInfo(m.headers, (address(env.from)[0] ?? address(env.sender)[0])?.address ?? ""));
+        }
+        store.setKinds(userId, path, kinds);
+        if (kinds.size) changed = true;
       }
     }
 
@@ -201,7 +227,7 @@ export async function cacheMessages(client: ImapFlow, userId: string, folder: st
   const lock = await client.getMailboxLock(folder, { readOnly: true });
   try {
     const fetched: FetchMessageObject[] = [];
-    for await (const m of client.fetch(missing, { uid: true, flags: true, envelope: true, internalDate: true, size: true, bodyStructure: true, headers: ["references"] }, { uid: true })) fetched.push(m);
+    for await (const m of client.fetch(missing, { uid: true, flags: true, envelope: true, internalDate: true, size: true, bodyStructure: true, headers: HEADERS }, { uid: true })) fetched.push(m);
     store.insertMessages(userId, folder, fetched.map(toRow));
     await fetchPreviews(client, userId, folder, fetched);
   } finally {

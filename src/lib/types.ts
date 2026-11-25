@@ -170,7 +170,10 @@ export type MailAccountInfo = {
   live: boolean;
 };
 
-export type MailNotify = "all" | "known" | "off";
+export type MailNotify = "all" | "important" | "known" | "off";
+
+/** The tabs of the sorted inbox. */
+export type MailCategory = "important" | "newsletter" | "notification";
 
 export type MailFolder = { path: string; name: string; delimiter: string; specialUse: string | null; total: number; unread: number };
 
@@ -216,6 +219,10 @@ export type MailSummary = {
   answered: boolean;
   attachments: boolean;
   size: number;
+  /** Where the sorted inbox puts it (in the inbox and its tabs). */
+  category?: MailCategory;
+  /** It can be left in one click (List-Unsubscribe). */
+  unsubscribe?: boolean;
 };
 
 /** Who a mail is written to, and how it relates to another one. */

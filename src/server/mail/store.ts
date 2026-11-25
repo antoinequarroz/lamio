@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/server/db";
-import type { MailAccountInfo, MailAttachment, MailAddress, MailFolder, MailNotify, MailStatus, MailSummary } from "@/lib/types";
+import type { MailAccountInfo, MailAttachment, MailAddress, MailCategory, MailFolder, MailNotify, MailStatus, MailSummary } from "@/lib/types";
+import type { MailKind, Unsubscribe } from "./sort";
 
 const now = () => new Date().toISOString();
 
@@ -35,7 +36,7 @@ const toInfo = (r: AccountRow): MailAccountInfo => ({
   lastError: r.last_error,
   syncedAt: r.synced_at,
   signature: r.signature ?? "",
-  notify: r.notify === "known" || r.notify === "off" ? r.notify : "all",
+  notify: r.notify === "known" || r.notify === "off" || r.notify === "important" ? r.notify : "all",
   // Known by the mail service only: the routes fill it in.
   live: false,
 });
@@ -153,6 +154,9 @@ export type MailRow = {
   answered: boolean;
   attachments: boolean;
   size: number;
+  /** What the headers say it is (sort.ts), "" for an ordinary mail. */
+  kind: MailKind;
+  unsubscribe: Unsubscribe | null;
 };
 
 export type MailFlags = { seen: boolean; flagged: boolean; answered: boolean };
@@ -166,14 +170,14 @@ export const cachedUids = (userId: string, folder: string) => (db().prepare("sel
 
 export function insertMessages(userId: string, folder: string, rows: MailRow[]) {
   const insert = db().prepare(
-    `insert or replace into mail_messages (user_id, folder, uid, message_id, in_reply_to, refs, subject, from_name, from_address, recipients, date, seen, flagged, answered, attachments, size, thread_id)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `insert or replace into mail_messages (user_id, folder, uid, message_id, in_reply_to, refs, subject, from_name, from_address, recipients, date, seen, flagged, answered, attachments, size, thread_id, kind, unsubscribe)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db().transaction(() => {
     // Oldest first, so a reply finds the conversation of the mail it answers.
     for (const m of [...rows].sort((a, b) => a.date.localeCompare(b.date))) {
       const thread = threadOf(userId, { folder, uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, refs: m.references, subject: m.subject, from: m.from.address, to: [...m.to, ...m.cc].map((x) => x.address), date: m.date });
-      insert.run(userId, folder, m.uid, m.messageId, m.inReplyTo, m.references, m.subject, m.from.name, m.from.address, JSON.stringify({ to: m.to, cc: m.cc }), m.date, +m.seen, +m.flagged, +m.answered, +m.attachments, m.size, thread);
+      insert.run(userId, folder, m.uid, m.messageId, m.inReplyTo, m.references, m.subject, m.from.name, m.from.address, JSON.stringify({ to: m.to, cc: m.cc }), m.date, +m.seen, +m.flagged, +m.answered, +m.attachments, m.size, thread, m.kind, m.unsubscribe ? JSON.stringify(m.unsubscribe) : null);
       adopt(userId, m.messageId, thread);
     }
   })();
@@ -257,19 +261,20 @@ function outsideFolders(userId: string, folder: string): string[] {
 }
 
 /** The conversations of a folder, newest first, each shown with its newest mail of the folder. */
-export function listMailThreads(userId: string, folder: string, before?: { date: string; uid: number }, limit = MAIL_PAGE): { messages: MailSummary[]; hasMore: boolean } {
+export function listMailThreads(userId: string, folder: string, before?: { date: string; uid: number }, limit = MAIL_PAGE, category?: MailCategory): { messages: MailSummary[]; hasMore: boolean } {
   ensureThreads(userId);
+  const c = categorized(userId, folder);
   const rows = db()
     .prepare(
       `select * from (
          select m.*, row_number() over (partition by thread_id order by date desc, uid desc) as rn,
                 sum(1 - seen) over (partition by thread_id) as thread_unread,
                 group_concat(uid) over (partition by thread_id) as thread_uids
-         from mail_messages m where user_id = ? and folder = ?
+         from ${c.sql} m ${category ? "where category = ?" : ""}
        ) where rn = 1 ${before ? "and (date < ? or (date = ? and uid < ?))" : ""}
        order by date desc, uid desc limit ?`,
     )
-    .all(...[userId, folder, ...(before ? [before.date, before.date, before.uid] : []), limit + 1]) as (MessageRow & { thread_id: string; thread_unread: number; thread_uids: string })[];
+    .all(...[...c.params, ...(category ? [category] : []), ...(before ? [before.date, before.date, before.uid] : []), limit + 1]) as (MessageRow & { thread_id: string; thread_unread: number; thread_uids: string })[];
   const page = rows.slice(0, limit);
   const me = (mailAccountInfo(userId)?.email ?? "").toLowerCase();
   const outside = outsideFolders(userId, folder);
@@ -355,6 +360,9 @@ type MessageRow = {
   answered: number;
   attachments: number;
   size: number;
+  /** Only when listed through categorized(). */
+  category?: MailCategory;
+  unsubscribe?: string | null;
 };
 
 function toSummary(r: MessageRow): MailSummary {
@@ -374,30 +382,29 @@ function toSummary(r: MessageRow): MailSummary {
     answered: !!r.answered,
     attachments: !!r.attachments,
     size: r.size,
+    ...(r.category && { category: r.category }),
+    ...(r.unsubscribe && { unsubscribe: true }),
   };
 }
 
 export const MAIL_PAGE = 50;
 
 /** The newest messages of a folder, a page at a time ("before": the date and uid of the last one shown). */
-export function listMailMessages(userId: string, folder: string, before?: { date: string; uid: number }, limit = MAIL_PAGE): { messages: MailSummary[]; hasMore: boolean } {
-  const rows = (
-    before
-      ? db()
-          .prepare("select * from mail_messages where user_id = ? and folder = ? and (date < ? or (date = ? and uid < ?)) order by date desc, uid desc limit ?")
-          .all(userId, folder, before.date, before.date, before.uid, limit + 1)
-      : db().prepare("select * from mail_messages where user_id = ? and folder = ? order by date desc, uid desc limit ?").all(userId, folder, limit + 1)
-  ) as MessageRow[];
+export function listMailMessages(userId: string, folder: string, before?: { date: string; uid: number }, limit = MAIL_PAGE, category?: MailCategory): { messages: MailSummary[]; hasMore: boolean } {
+  const c = categorized(userId, folder);
+  const where = [category && "category = ?", before && "(date < ? or (date = ? and uid < ?))"].filter(Boolean);
+  const rows = db()
+    .prepare(`select * from ${c.sql} m ${where.length ? `where ${where.join(" and ")}` : ""} order by date desc, uid desc limit ?`)
+    .all(...c.params, ...(category ? [category] : []), ...(before ? [before.date, before.date, before.uid] : []), limit + 1) as MessageRow[];
   return { messages: rows.slice(0, limit).map(toSummary), hasMore: rows.length > limit };
 }
 
 /** These mails, newest first: what the live update carries to the app. */
 export function mailSummaries(userId: string, folder: string, uids: number[]): MailSummary[] {
   if (!uids.length) return [];
-  const get = db().prepare("select * from mail_messages where user_id = ? and folder = ? and uid = ?");
-  return uids
-    .map((uid) => get.get(userId, folder, uid) as MessageRow | undefined)
-    .filter((r): r is MessageRow => !!r)
+  const c = categorized(userId, folder);
+  const rows = db().prepare(`select * from ${c.sql} m where uid in (${uids.map(() => "?").join(",")})`).all(...c.params, ...uids) as MessageRow[];
+  return rows
     .map(toSummary)
     .sort((a, b) => b.date.localeCompare(a.date) || b.uid - a.uid);
 }
@@ -514,4 +521,76 @@ export function mailContacts(userId: string, query: string, limit = 8): MailAddr
     )
     .all(userId, userId, userId, q, q, limit) as { address: string; name: string | null }[];
   return rows.map((r) => ({ name: r.name ?? "", address: r.address }));
+}
+
+// ---- Sorted inbox (see sort.ts)
+
+export const MAIL_CATEGORIES: MailCategory[] = ["important", "newsletter", "notification"];
+
+/**
+ * The mails of a folder with their category, as a subquery to name in FROM; its parameters come
+ * first in the statement. A rule for the sender wins, then someone I have written to is Important, then the headers.
+ */
+function categorized(userId: string, folder: string): { sql: string; params: unknown[] } {
+  const sent = specialFolder(userId, "\\Sent") ?? "";
+  return {
+    sql: `(select x.*, coalesce(r.category,
+            case when x.from_address in (
+              select lower(json_extract(p.value, '$.address')) from mail_messages s, json_each(s.recipients, '$.to') p where s.user_id = ? and s.folder = ?
+            ) then 'important' else nullif(x.kind, '') end, 'important') as category
+          from mail_messages x left join mail_sender_rules r on r.user_id = x.user_id and r.address = x.from_address
+          where x.user_id = ? and x.folder = ?)`,
+    params: [userId, sent, userId, folder],
+  };
+}
+
+/** Only the inbox is sorted. */
+export const isInbox = (userId: string, folder: string) => folder === (specialFolder(userId, "\\Inbox") ?? "INBOX");
+
+/** Unread mails of each tab of the inbox. */
+export function categoryUnread(userId: string): Record<MailCategory, number> {
+  const inbox = specialFolder(userId, "\\Inbox") ?? "INBOX";
+  const c = categorized(userId, inbox);
+  const rows = db().prepare(`select category, sum(1 - seen) as unread from ${c.sql} m group by category`).all(...c.params) as { category: MailCategory; unread: number }[];
+  const out = { important: 0, newsletter: 0, notification: 0 };
+  for (const r of rows) out[r.category] = r.unread ?? 0;
+  return out;
+}
+
+/** The category of these mails of a folder (to tell which new ones are Important). */
+export function categoriesOf(userId: string, folder: string, uids: number[]): Map<number, MailCategory> {
+  if (!uids.length) return new Map();
+  const c = categorized(userId, folder);
+  const rows = db().prepare(`select uid, category from ${c.sql} m where uid in (${uids.map(() => "?").join(",")})`).all(...c.params, ...uids) as { uid: number; category: MailCategory }[];
+  return new Map(rows.map((r) => [r.uid, r.category]));
+}
+
+export function setSenderRule(userId: string, address: string, category: MailCategory | null) {
+  const a = normal(address);
+  if (!a) return;
+  if (category) db().prepare("insert or replace into mail_sender_rules (user_id, address, category, created_at) values (?, ?, ?, ?)").run(userId, a, category, now());
+  else db().prepare("delete from mail_sender_rules where user_id = ? and address = ?").run(userId, a);
+}
+
+export const senderRule = (userId: string, address: string) =>
+  ((db().prepare("select category from mail_sender_rules where user_id = ? and address = ?").get(userId, normal(address)) as { category: MailCategory } | undefined)?.category ?? null);
+
+/** Inbox mails whose headers were never read for sorting (synced before the sorted inbox). */
+export const unsortedUids = (userId: string, folder: string, limit = 500) =>
+  (db().prepare("select uid from mail_messages where user_id = ? and folder = ? and kind is null order by uid desc limit ?").all(userId, folder, limit) as { uid: number }[]).map((r) => r.uid);
+
+export function setKinds(userId: string, folder: string, kinds: Map<number, { kind: MailKind; unsubscribe: Unsubscribe | null }>) {
+  const update = db().prepare("update mail_messages set kind = ?, unsubscribe = ? where user_id = ? and folder = ? and uid = ?");
+  db().transaction(() => {
+    for (const [uid, k] of kinds) update.run(k.kind, k.unsubscribe ? JSON.stringify(k.unsubscribe) : null, userId, folder, uid);
+  })();
+}
+
+export function unsubscribeOf(userId: string, folder: string, uid: number): Unsubscribe | null {
+  const r = db().prepare("select unsubscribe from mail_messages where user_id = ? and folder = ? and uid = ?").get(userId, folder, uid) as { unsubscribe: string | null } | undefined;
+  try {
+    return r?.unsubscribe ? (JSON.parse(r.unsubscribe) as Unsubscribe) : null;
+  } catch {
+    return null;
+  }
 }
