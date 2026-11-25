@@ -155,14 +155,13 @@ body::after {
   filter: var(--grain-filter);
 }
 
-/* Touch screens (the iPhone app): the grain is a plain overlay, not a blend. A blended layer over the
+/* Touch screens (the iPhone app): the same grain as on the site, as a plain overlay rather than a blend. A blended layer over the
    whole screen makes WebKit recomposite everything under it on every scrolled frame. Black noise in
    "normal" looks the same as in "multiply"; the dark theme keeps its inverted (white) noise. */
 @media (hover: none) {
   body::after {
     inset: 0;
     mix-blend-mode: normal;
-    opacity: calc(var(--grain-opacity) * 0.6);
   }
 }
 

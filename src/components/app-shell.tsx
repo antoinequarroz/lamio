@@ -83,8 +83,8 @@ function Shell({ children }: { children: React.ReactNode }) {
         </>
       )}
       <main className="flex min-w-0 flex-1 flex-col p-2 pl-0 max-md:p-0">
-        {/* On a phone: no frosted glass (costly to repaint while scrolling), a plain surface. */}
-        <div ref={page} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0 max-md:bg-surface max-md:shadow-none max-md:backdrop-blur-none">{children}</div>
+        {/* On a phone: the same rounded card on the grain as on the site, without the frosted glass (costly to repaint while scrolling). */}
+        <div ref={page} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:mx-1.5 max-md:mt-1 max-md:mb-1 max-md:rounded-[22px] max-md:bg-surface/80 max-md:backdrop-blur-none">{children}</div>
         <Suspense>
           <TabBar />
         </Suspense>
@@ -371,8 +371,8 @@ function TabBar() {
   const mine = conversations.reduce((n, c) => n + forMe(c), 0);
   if (pathname.startsWith("/c/") || (pathname === "/mail" && params.get("m"))) return null;
   return (
-    <div className="shrink-0 bg-surface px-3 pt-1.5 pb-1 md:hidden">
-      <nav aria-label="Sections" className="flex h-[62px] items-center rounded-[31px] border border-line-strong bg-bg/90 p-1 shadow-[0_8px_24px_-10px_rgba(20,18,14,0.28),0_1px_0_rgba(255,255,255,0.5)_inset]">
+    <div className="shrink-0 px-3 pt-1 pb-1 md:hidden">
+      <nav aria-label="Sections" className="flex h-[62px] items-center rounded-[31px] border border-line-strong bg-surface/85 p-1 shadow-[0_8px_24px_-10px_rgba(20,18,14,0.28),0_1px_0_rgba(255,255,255,0.5)_inset]">
         {nav.map(({ href, label, short, Icon }) => {
           const active = isUnder(pathname, href);
           const count = href === "/c" ? mine || unread : href === "/mail" ? (mail?.unread ?? 0) : 0;
