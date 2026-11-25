@@ -1,8 +1,9 @@
 "use client";
 
-import { Bold, File as FileIcon, Italic, Link2, List, ListOrdered, Loader2, Paperclip, Quote, Send, Trash2, Underline, X } from "lucide-react";
+import { Bold, Expand, File as FileIcon, Italic, Link2, List, ListOrdered, Loader2, Maximize2, Minimize2, Minus, Paperclip, Quote, Send, Shrink, Trash2, Underline, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useStored } from "@/lib/use-stored";
 import { toast } from "sonner";
 import { REMOTE_SRC } from "@/lib/mail-frame";
 import type { ComposeMode, MailAddress, MailAttachment, MailContent } from "@/lib/types";
@@ -88,6 +89,8 @@ function editableHtml(html: string): string {
 
 export type SendState = ComposeInit;
 
+type ComposeSize = "normal" | "large" | "full";
+
 export function Compose({ init, signature, onClose, onSent }: { init: ComposeInit; signature: string; onClose: () => void; onSent: (id: string, undoMs: number, state: SendState) => void }) {
   const [to, setTo] = useState(init.to);
   const [cc, setCc] = useState(init.cc);
@@ -100,6 +103,9 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
   const [saved, setSaved] = useState<"" | "saving" | "saved" | "error">("");
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // Small, large or full screen (kept for the next mail), and folded into a bar to read meanwhile.
+  const [size, setSize] = useStored<ComposeSize>("mail-compose-size", "normal", (v): v is ComposeSize => v === "normal" || v === "large" || v === "full");
+  const [min, setMin] = useState(false);
   const [linking, setLinking] = useState<string | null>(null);
   const editor = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -245,14 +251,25 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
 
   const title = { new: "Nouveau mail", reply: "Répondre", replyAll: "Répondre à tous", forward: "Transférer", draft: "Brouillon" }[init.mode];
 
+  const sizeButton = "press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink max-md:hidden";
+
   // Above everything, the app bar included (on a phone it takes the whole screen).
   return createPortal(
+    <>
+    {size === "full" && !min && <div className="fixed inset-0 z-[59] bg-[rgba(15,14,12,0.3)] backdrop-blur-[2px] max-md:hidden" onClick={() => setSize("normal")} />}
     <div
       role="dialog"
       aria-label={title}
       className={cn(
         "fixed z-[60] flex flex-col overflow-hidden border border-line-strong bg-surface shadow-2xl",
-        "inset-0 md:inset-auto md:right-6 md:bottom-6 md:h-[min(640px,calc(100vh-48px))] md:w-[600px] md:rounded-2xl",
+        "inset-0",
+        min
+          ? "md:top-auto md:left-auto md:right-6 md:bottom-0 md:h-12 md:w-[360px] md:rounded-t-xl md:rounded-b-none"
+          : size === "full"
+            ? "md:inset-6 md:rounded-2xl"
+            : size === "large"
+              ? "md:top-auto md:left-auto md:right-6 md:bottom-6 md:h-[calc(100vh-48px)] md:w-[min(960px,calc(100vw-48px))] md:rounded-2xl"
+              : "md:top-auto md:left-auto md:right-6 md:bottom-6 md:h-[min(640px,calc(100vh-48px))] md:w-[600px] md:rounded-2xl",
         dragging && "ring-2 ring-accent",
       )}
       onKeyDown={(e) => {
@@ -278,9 +295,24 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
         addFiles(e.dataTransfer.files);
       }}
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
-        <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
-        <span className="text-[11.5px] text-ink-3">{saved === "saving" ? "Enregistrement…" : saved === "saved" ? "Brouillon enregistré" : saved === "error" ? "Brouillon non enregistré" : ""}</span>
+      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-line pr-2 pl-4" onDoubleClick={(e) => e.target === e.currentTarget && (min ? setMin(false) : setSize(size === "normal" ? "large" : "normal"))}>
+        <h2 className={cn("min-w-0 flex-1 truncate text-[14px] font-semibold", min && "cursor-pointer")} onClick={() => min && setMin(false)}>
+          {min ? subject.trim() || title : title}
+        </h2>
+        <span className="mr-1 shrink-0 text-[11.5px] text-ink-3 max-sm:hidden">{min ? "" : saved === "saving" ? "Enregistrement…" : saved === "saved" ? "Brouillon enregistré" : saved === "error" ? "Brouillon non enregistré" : ""}</span>
+        <button onClick={() => setMin(!min)} aria-label={min ? "Rouvrir" : "Réduire"} title={min ? "Rouvrir" : "Réduire (le mail reste ouvert en bas)"} className={sizeButton}>
+          {min ? <Maximize2 className="size-4" /> : <Minus className="size-4" />}
+        </button>
+        {!min && (
+          <>
+            <button onClick={() => setSize(size === "large" ? "normal" : "large")} aria-label={size === "large" ? "Taille normale" : "Agrandir"} title={size === "large" ? "Taille normale" : "Agrandir"} className={sizeButton}>
+              {size === "large" ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+            </button>
+            <button onClick={() => setSize(size === "full" ? "normal" : "full")} aria-label={size === "full" ? "Quitter le plein écran" : "Plein écran"} title={size === "full" ? "Quitter le plein écran" : "Plein écran"} className={sizeButton}>
+              {size === "full" ? <Shrink className="size-4" /> : <Expand className="size-4" />}
+            </button>
+          </>
+        )}
         <button onClick={() => void close()} aria-label="Fermer" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
           <X className="size-4" />
         </button>
@@ -385,7 +417,8 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
         <Tool label="Supprimer le brouillon" onClick={() => void discard()} Icon={Trash2} />
       </footer>
       {dragging && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-accent/10 text-[14px] font-medium text-accent">Dépose les fichiers pour les joindre</div>}
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }

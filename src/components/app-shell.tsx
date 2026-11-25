@@ -1,17 +1,19 @@
 "use client";
 
-import { ArrowUpRight, Hash, LayoutGrid, Lock, Mail, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, Hash, LayoutGrid, Lock, Mail, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
 import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
+import { useStored } from "@/lib/use-stored";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
 import { APP_NAME, cn, moduleLink } from "@/lib/utils";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
+import { ResizeHandle } from "./resize-handle";
 import { Logo } from "./logo";
 import { ModulePicto } from "./module-icon";
 import { Avatar, Kbd, primaryClass } from "./ui";
@@ -33,23 +35,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { commandOpen, setCommandOpen, dialog, setDialog } = useApp();
+  // The sidebar's width, or folded into a narrow rail of icons (⌘\ or the button).
+  const [side, setSide] = useStored("app-sidebar", SIDEBAR, (v): v is typeof SIDEBAR => !!v && typeof (v as typeof SIDEBAR).width === "number");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setCommandOpen(!commandOpen);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        setSide((s) => ({ ...s, collapsed: !s.collapsed }));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commandOpen, setCommandOpen]);
+  }, [commandOpen, setCommandOpen, setSide]);
 
   return (
     <div className="flex h-dvh min-h-0">
-      <aside className="flex w-[248px] shrink-0 flex-col gap-1 px-3 py-3 max-md:hidden">
-        <Sidebar />
-      </aside>
+      {side.collapsed ? (
+        <aside className="flex w-[60px] shrink-0 flex-col items-center gap-1 py-3 max-md:hidden">
+          <Rail onExpand={() => setSide({ ...side, collapsed: false })} />
+        </aside>
+      ) : (
+        <>
+          <aside style={{ width: side.width }} className="flex shrink-0 flex-col gap-1 px-3 py-3 max-md:hidden">
+            <Sidebar onCollapse={() => setSide({ ...side, collapsed: true })} />
+          </aside>
+          <ResizeHandle label="Largeur de la barre latérale" className="after:bg-transparent" width={side.width} min={208} max={380} onChange={(w) => setSide({ ...side, width: w })} onReset={() => setSide({ ...side, width: SIDEBAR.width })} />
+        </>
+      )}
       <main className="flex min-w-0 flex-1 flex-col p-2 pl-0 max-md:p-0">
         <MobileBar />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0">{children}</div>
@@ -63,7 +79,47 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Sidebar() {
+const SIDEBAR = { width: 248, collapsed: false };
+
+/** The folded sidebar: the sections as icons, with a dot when something is unread. */
+function Rail({ onExpand }: { onExpand: () => void }) {
+  const pathname = usePathname();
+  const { me, conversations, mail, setCommandOpen, setDialog } = useApp();
+  const unread = conversations.reduce((n, c) => n + c.unread, 0);
+  const button = "press relative flex size-10 items-center justify-center rounded-lg";
+  return (
+    <>
+      <button onClick={onExpand} aria-label="Déplier la barre latérale (⌘\)" title="Déplier la barre latérale (⌘\)" className={cn(button, "mb-2")}>
+        <Logo />
+      </button>
+      <button onClick={() => setDialog("dm")} aria-label="Nouveau message" title="Nouveau message" className={cn(button, primaryClass)}>
+        <SquarePen className="size-4" strokeWidth={2.2} />
+      </button>
+      <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" title="Rechercher (⌘K)" className={cn(button, "mb-2 text-ink-2 hover:bg-ink/[0.05] hover:text-ink")}>
+        <Search className="size-4" />
+      </button>
+      {NAV.map(({ href, label, Icon }) => {
+        const active = pathname.startsWith(href);
+        const dot = (href === "/c" && unread > 0) || (href === "/mail" && !!mail?.unread);
+        return (
+          <Link key={href} href={href} aria-label={label} title={label} className={cn(button, active ? "bg-surface text-ink shadow-card" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}>
+            <Icon className={cn("size-[18px]", active ? "text-accent" : "text-ink-3")} />
+            {dot && <span className="absolute top-2 right-2 size-2 rounded-full bg-accent ring-2 ring-bg" />}
+          </Link>
+        );
+      })}
+      <span className="flex-1" />
+      <button onClick={onExpand} aria-label="Déplier la barre latérale" title="Déplier la barre latérale (⌘\)" className={cn(button, "text-ink-3 hover:bg-ink/[0.05] hover:text-ink")}>
+        <PanelLeftOpen className="size-4" />
+      </button>
+      <Link href="/settings" aria-label={me.name} title={me.name} className="mt-1">
+        <Avatar id={me.id} name={me.name} size="sm" />
+      </Link>
+    </>
+  );
+}
+
+function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const pathname = usePathname();
   const { me, conversations, modules, mail, setCommandOpen, setDialog } = useApp();
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
@@ -76,6 +132,9 @@ function Sidebar() {
         <Logo />
         <span className="text-[15px] font-semibold tracking-[-0.01em]">{APP_NAME}</span>
         <span className="ml-auto rounded-md border border-line px-1.5 py-px font-mono text-[10px] text-ink-3">v{APP_VERSION}</span>
+        <button onClick={onCollapse} aria-label="Replier la barre latérale" title="Replier la barre latérale (⌘\)" className="press -mr-1 flex size-7 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+          <PanelLeftClose className="size-4" />
+        </button>
       </div>
 
       <div className="mb-2 flex gap-1.5">

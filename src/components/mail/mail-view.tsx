@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MessagesSquare, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MessagesSquare, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,13 +8,16 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
 import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
+import { ResizeHandle } from "@/components/resize-handle";
 import { Avatar, Button, Card, Kbd } from "@/components/ui";
 import { useApp } from "@/lib/store";
+import { useStored } from "@/lib/use-stored";
 import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
 const THREADS_KEY = "mail-threads";
+const LAYOUT = { folders: 208, list: 380, foldersHidden: false };
 
 const FOLDER_ICONS: Record<string, typeof Inbox> = { "\\Inbox": Inbox, "\\Sent": Send, "\\Drafts": FileText, "\\Archive": Archive, "\\Junk": ShieldAlert, "\\Trash": Trash2, "\\Flagged": Flag };
 
@@ -55,6 +58,8 @@ export function MailView() {
   const [search, setSearch] = useState<MailSearch | null>(null);
   const [results, setResults] = useState<MailSummary[]>([]);
   const [searching, setSearching] = useState<"" | "local" | "server">("");
+  // The widths of the folders and of the list, and whether the folders are folded away.
+  const [layout, setLayout] = useStored("mail-layout", LAYOUT, (v): v is typeof LAYOUT => !!v && typeof (v as typeof LAYOUT).folders === "number" && typeof (v as typeof LAYOUT).list === "number");
   // "Par conversation" (one row per exchange) or "Mail par mail": a choice kept on this device.
   const [threaded, setThreaded] = useState(true);
   useEffect(() => {
@@ -395,16 +400,26 @@ export function MailView() {
   return (
     <div className="flex min-h-0 flex-1">
       {/* Folders */}
-      <nav className={cn("scroll-thin flex w-[208px] shrink-0 flex-col gap-px overflow-y-auto border-r border-line px-2 py-3 max-lg:hidden")}>
-        <div className="mb-2 px-2">
-          <h1 className="font-display text-[26px] leading-none">Mails</h1>
-          <p className="mt-1.5 truncate text-[12px] text-ink-3" title={info.email}>{info.email}</p>
-        </div>
-        <FolderNav folders={folders} current={folder} onOpen={(path) => go(path, null)} onChanged={(next, path) => (setFolders(next), path !== undefined && go(path ?? "INBOX", null))} />
-      </nav>
+      {!layout.foldersHidden && (
+        <>
+          <nav style={{ width: layout.folders }} className="scroll-thin flex shrink-0 flex-col gap-px overflow-y-auto px-2 py-3 max-lg:hidden">
+            <div className="mb-2 flex items-start gap-1 px-2">
+              <div className="min-w-0 flex-1">
+                <h1 className="font-display text-[26px] leading-none">Mails</h1>
+                <p className="mt-1.5 truncate text-[12px] text-ink-3" title={info.email}>{info.email}</p>
+              </div>
+              <button onClick={() => setLayout({ ...layout, foldersHidden: true })} aria-label="Replier les dossiers" title="Replier les dossiers" className="press -mr-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+                <PanelLeftClose className="size-4" />
+              </button>
+            </div>
+            <FolderNav folders={folders} current={folder} onOpen={(path) => go(path, null)} onChanged={(next, path) => (setFolders(next), path !== undefined && go(path ?? "INBOX", null))} />
+          </nav>
+          <ResizeHandle label="Largeur des dossiers" className="max-lg:hidden" width={layout.folders} min={160} max={340} onChange={(w) => setLayout({ ...layout, folders: w })} onReset={() => setLayout({ ...layout, folders: LAYOUT.folders })} />
+        </>
+      )}
 
       {/* List */}
-      <section className={cn("flex min-h-0 w-[380px] shrink-0 flex-col border-r border-line max-lg:w-[340px] max-md:w-full max-md:border-0", openUid && "max-md:hidden")}>
+      <section style={{ "--list-w": `${layout.list}px` } as React.CSSProperties} className={cn("flex min-h-0 shrink-0 flex-col max-md:w-full md:w-[var(--list-w)]", layout.foldersHidden ? "" : "max-lg:border-l-0", openUid && "max-md:hidden")}>
         {search ? (
           <SearchBar
             search={search}
@@ -437,6 +452,11 @@ export function MailView() {
               </option>
             ))}
           </select>
+          {layout.foldersHidden && (
+            <button onClick={() => setLayout({ ...layout, foldersHidden: false })} aria-label="Afficher les dossiers" title="Afficher les dossiers" className="press -ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink max-lg:hidden">
+              <PanelLeftOpen className="size-4" />
+            </button>
+          )}
           <span className="truncate text-[14px] font-medium max-lg:hidden">{current?.name ?? folder}</span>
           {current && current.unread > 0 && <span className="tabular shrink-0 text-[12px] whitespace-nowrap text-ink-3 max-xl:hidden">{current.unread} non lus</span>}
           <span className="ml-auto flex items-center gap-1" title={info.live ? "Temps réel actif : les nouveaux mails arrivent en direct" : "Temps réel en cours de connexion"}>
@@ -497,6 +517,8 @@ export function MailView() {
           />
         )}
       </section>
+
+      <ResizeHandle label="Largeur de la liste" width={layout.list} min={280} max={680} onChange={(w) => setLayout({ ...layout, list: w })} onReset={() => setLayout({ ...layout, list: LAYOUT.list })} />
 
       {/* Reading */}
       <section className={cn("flex min-w-0 flex-1 flex-col", !openUid && "max-md:hidden")}>
