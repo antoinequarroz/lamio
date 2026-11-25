@@ -188,3 +188,23 @@ export async function syncMailbox(client: ImapFlow, userId: string, options: { f
   }
   return changed;
 }
+
+/**
+ * Adds these mails of a folder to the local copy when they are not in it yet (older than the
+ * first sync, found by a search on the server), so they can be listed and opened like the others.
+ * The folder must not be open on this connection.
+ */
+export async function cacheMessages(client: ImapFlow, userId: string, folder: string, uids: number[]) {
+  const known = new Set(store.cachedUids(userId, folder));
+  const missing = uids.filter((u) => !known.has(u));
+  if (!missing.length) return;
+  const lock = await client.getMailboxLock(folder, { readOnly: true });
+  try {
+    const fetched: FetchMessageObject[] = [];
+    for await (const m of client.fetch(missing, { uid: true, flags: true, envelope: true, internalDate: true, size: true, bodyStructure: true, headers: ["references"] }, { uid: true })) fetched.push(m);
+    store.insertMessages(userId, folder, fetched.map(toRow));
+    await fetchPreviews(client, userId, folder, fetched);
+  } finally {
+    lock.release();
+  }
+}

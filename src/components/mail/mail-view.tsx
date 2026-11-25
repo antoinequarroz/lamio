@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, Loader2, Mail, MailOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, Loader2, Mail, MailOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,6 +34,9 @@ const keyOf = (m: { folder: string; uid: number }) => `${m.folder}|${m.uid}`;
 
 type Account = { enabled: boolean; account: MailAccountInfo | null };
 
+/** A search in progress: the words, where, and the filters. */
+type MailSearch = { q: string; in: string | null; unread: boolean; attachments: boolean; within: "" | "30" | "365" };
+
 export function MailView() {
   const router = useRouter();
   const params = useSearchParams();
@@ -48,6 +51,9 @@ export function MailView() {
   const [compose, setCompose] = useState<ComposeInit | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [moving, setMoving] = useState<number[] | null>(null);
+  const [search, setSearch] = useState<MailSearch | null>(null);
+  const [results, setResults] = useState<MailSummary[]>([]);
+  const [searching, setSearching] = useState<"" | "local" | "server">("");
   // Mails waiting to leave or just sent: to reopen them on "Annuler" or when sending failed.
   const outgoing = useRef(new Map<string, SendState>());
 
@@ -130,6 +136,49 @@ export function MailView() {
     setHasMore(r.hasMore);
   }, [messages, hasMore, folder]);
 
+  // Search: the local copy at once, then the mailbox itself (full text, old mails) to complete.
+  const searchKey = search && (search.q.trim() || search.unread || search.attachments || search.within) ? JSON.stringify(search) : "";
+  const searchRun = useRef(0);
+  const runSearch = useCallback(async (s: MailSearch, server: boolean) => {
+    const p = new URLSearchParams({ q: s.q.trim() });
+    if (s.in) p.set("folder", s.in);
+    if (s.unread) p.set("unread", "1");
+    if (s.attachments) p.set("attachments", "1");
+    if (s.within) p.set("since", new Date(Date.now() - Number(s.within) * 86_400_000).toISOString().slice(0, 10));
+    if (server) p.set("server", "1");
+    return (await api<{ messages: MailSummary[] }>(`/api/mail/search?${p}`)).messages;
+  }, []);
+  useEffect(() => {
+    if (!searchKey) {
+      setResults([]);
+      setSearching("");
+      return;
+    }
+    const s = JSON.parse(searchKey) as MailSearch;
+    const run = ++searchRun.current;
+    setSearching("local");
+    const t = setTimeout(async () => {
+      try {
+        const local = await runSearch(s, false);
+        if (run !== searchRun.current) return;
+        setResults(local);
+        setSearching("server");
+        const all = await runSearch(s, true);
+        if (run === searchRun.current) setResults(all);
+      } catch (e) {
+        if (run === searchRun.current) toast.error((e as Error).message);
+      } finally {
+        if (run === searchRun.current) setSearching("");
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [searchKey, runSearch]);
+  const openSearch = useCallback(() => setSearch((s) => s ?? { q: "", in: null, unread: false, attachments: false, within: "" }), []);
+  const closeSearch = useCallback(() => {
+    searchRun.current++;
+    setSearch(null);
+  }, []);
+
   const sync = async () => {
     setSyncing(true);
     try {
@@ -155,15 +204,22 @@ export function MailView() {
       if (action.type === "delete" && !window.confirm(uids.length > 1 ? `Supprimer définitivement ces ${uids.length} mails ?` : "Supprimer définitivement ce mail ?")) return;
       const from = folder;
       const leaves = action.type !== "seen" && action.type !== "flagged";
+      const hit = (m: MailSummary) => m.folder === from && uids.includes(m.uid);
       if (leaves) {
-        // The mail open goes away: the next one opens, like in Mail.
+        // The mail open goes away: the next one opens, like in Mail (in the results while searching).
         if (openUid && uids.includes(openUid)) {
-          const i = messages.findIndex((m) => m.uid === openUid);
-          const next = messages.slice(i + 1).find((m) => !uids.includes(m.uid)) ?? messages.slice(0, i).reverse().find((m) => !uids.includes(m.uid));
-          go(from, next?.uid ?? null);
+          const list = search ? results : messages;
+          const i = list.findIndex((m) => m.folder === from && m.uid === openUid);
+          const next = list.slice(i + 1).find((m) => !hit(m)) ?? list.slice(0, Math.max(0, i)).reverse().find((m) => !hit(m));
+          go(next?.folder ?? from, next?.uid ?? null);
         }
-        setMessages((list) => list.filter((m) => !uids.includes(m.uid)));
-      } else setMessages((list) => list.map((m) => (uids.includes(m.uid) ? { ...m, [action.type]: action.value } : m)));
+        setMessages((list) => list.filter((m) => !hit(m)));
+        setResults((list) => list.filter((m) => !hit(m)));
+      } else {
+        const update = (list: MailSummary[]) => list.map((m) => (hit(m) ? { ...m, [action.type]: action.value } : m));
+        setMessages(update);
+        setResults(update);
+      }
       setSelected(new Set());
       try {
         const r = await api<{ moved?: { to: string; uids: number[] } }>("/api/mail/actions", { method: "POST", json: { folder: from, uids, action } });
@@ -193,7 +249,7 @@ export function MailView() {
         void loadMessages(from, shown.current).catch(() => {});
       }
     },
-    [folder, openUid, messages, go, loadMessages],
+    [folder, openUid, messages, results, search, go, loadMessages],
   );
 
   const toggleSelect = useCallback(
@@ -217,7 +273,14 @@ export function MailView() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
-      const i = messages.findIndex((m) => m.uid === openUid);
+      const list = search ? results : messages;
+      const i = list.findIndex((m) => m.folder === folder && m.uid === openUid);
+      if (e.key === "/" && !compose && !moving) {
+        e.preventDefault();
+        if (search) document.getElementById("mail-search")?.focus();
+        else openSearch();
+        return;
+      }
       if (e.key === "c" && !compose) {
         e.preventDefault();
         setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" });
@@ -249,22 +312,23 @@ export function MailView() {
         return;
       }
       if (e.key === "j" || e.key === "ArrowDown") {
-        const next = messages[i + 1] ?? (i === -1 ? messages[0] : null);
+        const next = list[i + 1] ?? (i === -1 ? list[0] : null);
         if (next) {
           e.preventDefault();
-          go(folder, next.uid);
+          go(next.folder, next.uid);
         }
       } else if (e.key === "k" || e.key === "ArrowUp") {
-        const prev = messages[i - 1];
+        const prev = list[i - 1];
         if (prev) {
           e.preventDefault();
-          go(folder, prev.uid);
+          go(prev.folder, prev.uid);
         }
-      } else if (e.key === "Escape" && openUid && !e.defaultPrevented) go(folder, null);
+      } else if (e.key === "Escape" && openUid) go(folder, null);
+      else if (e.key === "Escape" && search) closeSearch();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [messages, openUid, folder, go, compose, moving, selected, act, isTrash, isJunk, toggleSelect]);
+  }, [messages, results, search, openUid, folder, go, compose, moving, selected, act, isTrash, isJunk, toggleSelect, openSearch, closeSearch]);
 
   const sent = useCallback((id: string, undoMs: number, state: SendState) => {
     outgoing.current.set(id, state);
@@ -288,7 +352,14 @@ export function MailView() {
     });
   }, []);
 
-  const markSeen = useCallback((uid: number) => setMessages((m) => m.map((x) => (x.uid === uid ? { ...x, seen: true } : x))), []);
+  const markSeen = useCallback(
+    (uid: number) => {
+      const seen = (list: MailSummary[]) => list.map((x) => (x.folder === folder && x.uid === uid ? { ...x, seen: true } : x));
+      setMessages(seen);
+      setResults(seen);
+    },
+    [folder],
+  );
 
   if (!account) return <Centered><Loader2 className="size-5 animate-spin text-ink-3" /></Centered>;
   if (!account.enabled || !account.account) return <NoMailbox enabled={account.enabled} />;
@@ -307,7 +378,16 @@ export function MailView() {
 
       {/* List */}
       <section className={cn("flex min-h-0 w-[380px] shrink-0 flex-col border-r border-line max-lg:w-[340px] max-md:w-full max-md:border-0", openUid && "max-md:hidden")}>
-        {selected.size > 0 ? (
+        {search ? (
+          <SearchBar
+            search={search}
+            folderName={folders.find((f) => f.path === (search.in ?? folder))?.name ?? search.in ?? folder}
+            busy={searching}
+            onChange={(next) => setSearch((s) => (s ? { ...s, ...next } : s))}
+            onScope={(all) => setSearch((s) => (s ? { ...s, in: all ? null : folder } : s))}
+            onClose={closeSearch}
+          />
+        ) : selected.size > 0 ? (
           <SelectionBar
             count={selected.size}
             all={selected.size === messages.length}
@@ -336,6 +416,9 @@ export function MailView() {
             <Zap className={cn("size-3.5", info.live ? "text-accent" : "text-ink-3")} />
             <span className="text-[11.5px] text-ink-3 max-sm:hidden">{info.live ? "En direct" : "Connexion…"}</span>
           </span>
+          <button onClick={openSearch} aria-label="Rechercher" title="Rechercher (/)" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <Search className="size-4" />
+          </button>
           <button onClick={() => setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" })} aria-label="Nouveau mail" title="Nouveau mail (C)" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
             <SquarePen className="size-4" />
           </button>
@@ -351,17 +434,33 @@ export function MailView() {
             <Link href="/settings" className="shrink-0 font-medium text-accent">Réglages</Link>
           </div>
         )}
-        <MessageList
-          messages={messages}
-          loading={loading || info.status === "pending" || info.status === "syncing"}
-          hasMore={hasMore}
-          onMore={more}
-          openUid={openUid}
-          fresh={fresh}
-          selected={selected}
-          onSelect={toggleSelect}
-          onOpen={(uid) => go(folder, uid)}
-        />
+        {search ? (
+          <MessageList
+            key="search"
+            messages={results}
+            loading={!!searching}
+            empty={searchKey ? "Aucun mail trouvé." : "Tape des mots, un nom (de:léa, à:paul) ou choisis un filtre."}
+            emptyIcon={Search}
+            hasMore={false}
+            onMore={() => {}}
+            open={openUid ? { folder, uid: openUid } : null}
+            fresh={fresh}
+            folders={search.in ? undefined : folders}
+            onOpen={(m) => go(m.folder, m.uid)}
+          />
+        ) : (
+          <MessageList
+            messages={messages}
+            loading={loading || info.status === "pending" || info.status === "syncing"}
+            hasMore={hasMore}
+            onMore={more}
+            open={openUid ? { folder, uid: openUid } : null}
+            fresh={fresh}
+            selected={selected}
+            onSelect={toggleSelect}
+            onOpen={(m) => go(folder, m.uid)}
+          />
+        )}
       </section>
 
       {/* Reading */}
@@ -590,26 +689,111 @@ function FolderLink({ f, active, onClick }: { f: MailFolder; active: boolean; on
   );
 }
 
+const PERIODS: { value: MailSearch["within"]; label: string }[] = [
+  { value: "", label: "Toutes dates" },
+  { value: "30", label: "30 derniers jours" },
+  { value: "365", label: "12 derniers mois" },
+];
+
+/** The search field and its filters, in place of the list's header. */
+function SearchBar({
+  search,
+  folderName,
+  busy,
+  onChange,
+  onScope,
+  onClose,
+}: {
+  search: MailSearch;
+  folderName: string;
+  busy: "" | "local" | "server";
+  onChange: (next: Partial<MailSearch>) => void;
+  onScope: (all: boolean) => void;
+  onClose: () => void;
+}) {
+  const chip = (on: boolean) =>
+    cn("press h-7 shrink-0 rounded-full border px-2.5 text-[12px] whitespace-nowrap", on ? "border-accent bg-accent-soft font-medium text-accent" : "border-line-strong text-ink-2 hover:bg-ink/[0.04]");
+  return (
+    <div className="shrink-0 border-b border-line">
+      <div className="flex h-[52px] items-center gap-2 px-3">
+        <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line-strong bg-surface px-2.5 focus-within:border-accent">
+          {busy ? <Loader2 className="size-4 shrink-0 animate-spin text-ink-3" /> : <Search className="size-4 shrink-0 text-ink-3" />}
+          <input
+            id="mail-search"
+            autoFocus
+            value={search.q}
+            onChange={(e) => onChange({ q: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                if (search.q) onChange({ q: "" });
+                else onClose();
+              }
+            }}
+            placeholder="Rechercher dans les mails"
+            aria-label="Rechercher dans les mails"
+            className="min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-ink-3"
+          />
+        </div>
+        <button onClick={onClose} className="press shrink-0 rounded-lg px-2 py-1.5 text-[13px] text-ink-2 hover:bg-ink/[0.05]">
+          Fermer
+        </button>
+      </div>
+      <div className="scroll-thin flex items-center gap-1.5 overflow-x-auto px-3 pb-2.5">
+        <button onClick={() => onScope(true)} className={chip(!search.in)}>Tous les dossiers</button>
+        <button onClick={() => onScope(false)} className={cn(chip(!!search.in), "max-w-[10rem] truncate")} title={folderName}>{folderName}</button>
+        <span className="mx-0.5 h-4 w-px shrink-0 bg-line" />
+        <button onClick={() => onChange({ unread: !search.unread })} className={chip(search.unread)} aria-pressed={search.unread}>Non lus</button>
+        <button onClick={() => onChange({ attachments: !search.attachments })} className={chip(search.attachments)} aria-pressed={search.attachments}>
+          <Paperclip className="mr-1 inline size-3" />
+          Pièces jointes
+        </button>
+        <select
+          value={search.within}
+          onChange={(e) => onChange({ within: e.target.value as MailSearch["within"] })}
+          aria-label="Période"
+          className={cn(chip(!!search.within), "appearance-none bg-transparent pr-2.5")}
+        >
+          {PERIODS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+      </div>
+      {busy === "server" && <p className="px-3 pb-2 text-[11.5px] text-ink-3">Recherche aussi dans toute la boîte sur le serveur…</p>}
+    </div>
+  );
+}
+
+const NO_SELECTION = new Set<number>();
+
 function MessageList({
   messages,
   loading,
+  empty = "Aucun mail dans ce dossier.",
+  emptyIcon: EmptyIcon = Inbox,
   hasMore,
   onMore,
-  openUid,
+  open,
   fresh,
-  selected,
+  selected = NO_SELECTION,
   onSelect,
+  folders,
   onOpen,
 }: {
   messages: MailSummary[];
   loading: boolean;
+  empty?: string;
+  emptyIcon?: typeof Inbox;
   hasMore: boolean;
   onMore: () => void;
-  openUid: number | null;
+  open: { folder: string; uid: number } | null;
   fresh: Set<string>;
-  selected: Set<number>;
-  onSelect: (uid: number, range: boolean) => void;
-  onOpen: (uid: number) => void;
+  /** Without onSelect (search results), mails cannot be ticked. */
+  selected?: Set<number>;
+  onSelect?: (uid: number, range: boolean) => void;
+  /** Given, each row says which folder the mail is in (a search across folders). */
+  folders?: MailFolder[];
+  onOpen: (m: MailSummary) => void;
 }) {
   const end = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -625,7 +809,7 @@ function MessageList({
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "nearest" });
-  }, [openUid]);
+  }, [open?.folder, open?.uid]);
 
   if (!messages.length)
     return (
@@ -633,12 +817,12 @@ function MessageList({
         {loading ? (
           <>
             <Loader2 className="size-5 animate-spin" />
-            Synchronisation de ta boîte…
+            {onSelect ? "Synchronisation de ta boîte…" : "Recherche…"}
           </>
         ) : (
           <>
-            <Inbox className="size-6" strokeWidth={1.5} />
-            Aucun mail dans ce dossier.
+            <EmptyIcon className="size-6" strokeWidth={1.5} />
+            {empty}
           </>
         )}
       </div>
@@ -648,11 +832,12 @@ function MessageList({
     <div className="scroll-thin flex-1 overflow-y-auto">
       <ul>
         {messages.map((m) => {
-          const active = m.uid === openUid;
+          const active = !!open && m.folder === open.folder && m.uid === open.uid;
           const checked = selected.has(m.uid);
+          const place = folders?.find((f) => f.path === m.folder);
           return (
             <li
-              key={m.uid}
+              key={keyOf(m)}
               className={cn(
                 "group relative border-b border-line transition-colors duration-300",
                 checked ? "bg-[color-mix(in_oklab,var(--accent)_16%,transparent)]" : active ? "bg-accent-soft" : "hover:bg-ink/[0.03]",
@@ -660,7 +845,7 @@ function MessageList({
               )}
             >
               {/* Select: the box shows on hover, or for all once one is ticked. ⌘/Ctrl-click and Shift-click work too. */}
-              <button
+              {onSelect && <button
                 onClick={(e) => onSelect(m.uid, e.shiftKey)}
                 aria-label={checked ? "Désélectionner" : "Sélectionner"}
                 aria-pressed={checked}
@@ -670,10 +855,10 @@ function MessageList({
                 )}
               >
                 <span className={cn("flex size-4 items-center justify-center rounded border", checked ? "border-accent bg-accent text-accent-ink" : "border-line-strong bg-surface")}>{checked && <Check className="size-3" strokeWidth={3} />}</span>
-              </button>
+              </button>}
               <button
                 ref={active ? activeRef : undefined}
-                onClick={(e) => (e.metaKey || e.ctrlKey || e.shiftKey || selected.size ? onSelect(m.uid, e.shiftKey) : onOpen(m.uid))}
+                onClick={(e) => (onSelect && (e.metaKey || e.ctrlKey || e.shiftKey || selected.size) ? onSelect(m.uid, e.shiftKey) : onOpen(m))}
                 className="relative flex w-full flex-col gap-0.5 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset md:pl-8"
               >
                 {!m.seen && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
@@ -685,6 +870,12 @@ function MessageList({
                 </span>
                 <span className={cn("truncate text-[13px]", m.seen ? "text-ink-2" : "font-medium text-ink")}>{m.subject || "(sans objet)"}</span>
                 <span className="line-clamp-2 text-[12.5px] leading-snug text-ink-3">{m.preview || " "}</span>
+                {folders && (
+                  <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3">
+                    <Folder className="size-3" />
+                    {place?.name ?? m.folder}
+                  </span>
+                )}
               </button>
             </li>
           );
