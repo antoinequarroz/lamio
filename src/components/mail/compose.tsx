@@ -1,6 +1,6 @@
 "use client";
 
-import { Bold, Expand, File as FileIcon, Italic, Link2, List, ListOrdered, Loader2, Maximize2, Minimize2, Minus, Paperclip, Quote, Send, Shrink, Trash2, Underline, X } from "lucide-react";
+import { Bold, ChevronUp, Expand, File as FileIcon, Italic, Link2, List, ListOrdered, Loader2, Maximize2, Minimize2, Minus, Paperclip, Quote, Send, Shrink, Trash2, Underline, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useStored } from "@/lib/use-stored";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { REMOTE_SRC } from "@/lib/mail-frame";
 import type { ComposeMode, MailAddress, MailAttachment, MailContent } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
+import { WhenMenu } from "./when-menu";
 
 /** What the compose window starts with. */
 export type ComposeInit = {
@@ -91,7 +92,7 @@ export type SendState = ComposeInit;
 
 type ComposeSize = "normal" | "large" | "full";
 
-export function Compose({ init, signature, onClose, onSent }: { init: ComposeInit; signature: string; onClose: () => void; onSent: (id: string, undoMs: number, state: SendState) => void }) {
+export function Compose({ init, signature, onClose, onSent, onScheduled }: { init: ComposeInit; signature: string; onClose: () => void; onSent: (id: string, undoMs: number, state: SendState) => void; onScheduled: (id: string, due: string, state: SendState) => void }) {
   const [to, setTo] = useState(init.to);
   const [cc, setCc] = useState(init.cc);
   const [bcc, setBcc] = useState(init.bcc);
@@ -198,7 +199,8 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
     if (d) await api(`/api/mail/draft?folder=${encodeURIComponent(d.folder)}&uid=${d.uid}`, { method: "DELETE" }).catch(() => {});
   };
 
-  const send = async () => {
+  /** Now (with a few seconds to cancel), or at a chosen time: the server keeps it until then. */
+  const send = async (when?: Date) => {
     if (!to.length && !cc.length && !bcc.length) return toast.error("Ajoute au moins un destinataire");
     if (timer.current) clearTimeout(timer.current);
     setSending(true);
@@ -206,8 +208,11 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
     if (saving.current) await saving.current;
     const s = state();
     try {
-      const r = await fetch("/api/mail/send", { method: "POST", body: form(s) });
-      const data = (await r.json().catch(() => ({}))) as { id?: string; undoMs?: number; error?: string };
+      const body = form(s);
+      if (when) body.set("at", when.toISOString());
+      const r = await fetch("/api/mail/send", { method: "POST", body });
+      const data = (await r.json().catch(() => ({}))) as { id?: string; undoMs?: number; scheduled?: { id: string; due: string }; error?: string };
+      if (r.ok && data.scheduled) return onScheduled(data.scheduled.id, data.scheduled.due, s);
       if (!r.ok || !data.id) throw new Error(data.error ?? "L'envoi a échoué");
       onSent(data.id, data.undoMs ?? 5000, s);
     } catch (e) {
@@ -410,6 +415,13 @@ export function Compose({ init, signature, onClose, onSent }: { init: ComposeIni
           {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
           Envoyer
         </button>
+        <WhenMenu kind="send" title="Programmer l'envoi" align="left" up onPick={(d) => void send(d)}>
+          {(toggle, open) => (
+            <button onClick={toggle} disabled={sending} aria-label="Programmer l'envoi" title="Programmer l'envoi" aria-expanded={open} className={cn("press -ml-1 flex h-9 w-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink", open && "bg-ink/[0.05] text-ink")}>
+              <ChevronUp className="size-4" />
+            </button>
+          )}
+        </WhenMenu>
         <span className="hidden text-[11.5px] text-ink-3 md:inline">⌘ Entrée</span>
         <span className="flex-1" />
         <input ref={fileInput} type="file" multiple hidden onChange={(e) => (e.target.files && addFiles(e.target.files), (e.target.value = ""))} />

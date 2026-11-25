@@ -249,6 +249,14 @@ function Notifier() {
   useEffect(
     () =>
       listen((event) => {
+        if (event.type === "mail" && event.reminder) {
+          // Something held by the server: a mail nobody answered, a scheduled send that left.
+          const r = event.reminder;
+          const open = r.uid ? () => router.push(`/mail?${new URLSearchParams({ ...(r.folder && r.folder !== "INBOX" ? { f: r.folder } : {}), m: String(r.uid) })}`) : undefined;
+          if (document.hidden) deviceNotify(r.title, r.body, `reminder${r.uid ?? r.title}`, open ?? (() => router.push("/mail")));
+          else toast(r.title, { description: r.body, icon: <Mail className="size-4" />, duration: 10_000, action: open ? { label: "Ouvrir", onClick: open } : undefined });
+          return;
+        }
         if (event.type === "mail") {
           // A new mail worth telling (the server applied the choice made in Réglages › Mails).
           const alert = event.alert ?? [];

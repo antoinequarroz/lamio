@@ -149,6 +149,7 @@ let started = false;
 export function startAll() {
   if (started || !mailEnabled()) return;
   started = true;
+  void import("./later").then((m) => m.startLater());
   store.mailAccountUsers().forEach((userId, i) => {
     start(userId);
     setTimeout(() => void syncNow(userId, { full: true }), 2000 + i * 3000).unref?.();

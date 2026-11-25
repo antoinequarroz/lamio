@@ -594,3 +594,15 @@ export function unsubscribeOf(userId: string, folder: string, uid: number): Unsu
     return null;
   }
 }
+
+/** Someone else wrote in the conversation of this mail of mine after it left. */
+export function repliedTo(userId: string, messageId: string | null, sentAt: string, me: string): boolean {
+  if (!messageId) return false;
+  ensureThreads(userId);
+  const head = db().prepare("select thread_id from mail_messages where user_id = ? and message_id = ? and thread_id is not null limit 1").get(userId, messageId) as { thread_id: string } | undefined;
+  const byRef = db()
+    .prepare("select 1 from mail_messages where user_id = ? and lower(from_address) != ? and date > ? and (in_reply_to = ? or instr(coalesce(refs, ''), ?) > 0) limit 1")
+    .get(userId, me, sentAt, messageId, messageId);
+  if (byRef) return true;
+  return !!(head && db().prepare("select 1 from mail_messages where user_id = ? and thread_id = ? and lower(from_address) != ? and date > ? limit 1").get(userId, head.thread_id, me, sentAt));
+}

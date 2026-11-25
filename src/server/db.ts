@@ -207,6 +207,16 @@ export function db() {
   // Mails, sorted inbox: what the headers say a mail is (null: not read yet), and how to leave its list.
   addColumn("mail_messages", "kind", "text");
   addColumn("mail_messages", "unsubscribe", "text");
+  // Mails held by the server for later: a scheduled send, a snooze, a follow-up (mail/later.ts).
+  conn.exec(`create table if not exists mail_later (
+    id text primary key,
+    user_id text not null references users (id) on delete cascade,
+    kind text not null,
+    due_at text not null,
+    data text not null,
+    created_at text not null
+  )`);
+  conn.exec("create index if not exists mail_later_due on mail_later (due_at)");
   // "Toujours dans Important / Newsletters / Notifications" for a sender.
   conn.exec(`create table if not exists mail_sender_rules (
     user_id text not null references users (id) on delete cascade,

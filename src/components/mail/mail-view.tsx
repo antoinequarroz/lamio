@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MailX, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, Clock, MailOpen, MailX, AlarmClock, BellRing, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,12 +8,13 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
 import { ShareDialog, TicketDialog } from "@/components/mail/gateways";
+import { WhenMenu, whenText } from "@/components/mail/when-menu";
 import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
 import { ResizeHandle } from "@/components/resize-handle";
-import { Avatar, Button, Card, Kbd } from "@/components/ui";
+import { Avatar, Button, Card, Kbd, Modal } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { useStored } from "@/lib/use-stored";
-import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailCategory, MailContent, MailFolder, MailSummary } from "@/lib/types";
+import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailCategory, MailContent, MailFolder, MailLaterInfo, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
@@ -468,6 +469,38 @@ export function MailView() {
     });
   }, []);
 
+  // What waits on the server: scheduled sends, snoozed mails, follow-ups.
+  const [later, setLater] = useState<MailLaterInfo[]>([]);
+  const [laterOpen, setLaterOpen] = useState(false);
+  const loadLater = useCallback(() => void api<{ items: MailLaterInfo[] }>("/api/mail/later").then((r) => setLater(r.items), () => {}), []);
+  useEffect(() => {
+    loadLater();
+    return listen((e) => void (e.type === "mail" && loadLater()));
+  }, [listen, loadLater]);
+
+  const scheduled = useCallback(
+    (id: string, due: string, state: SendState) => {
+      setCompose(null);
+      loadLater();
+      toast.success(`Envoi programmé ${whenText(due)}`, {
+        action: {
+          label: "Annuler",
+          onClick: async () => {
+            try {
+              await api(`/api/mail/later?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+              loadLater();
+              setCompose({ ...state, unsaved: true });
+              toast("Envoi annulé", { description: "Le mail est de nouveau ouvert." });
+            } catch (e) {
+              toast.error((e as Error).message);
+            }
+          },
+        },
+      });
+    },
+    [loadLater],
+  );
+
   const markSeen = useCallback(
     (uid: number, all?: number[]) => {
       const uids = all ?? [uid];
@@ -499,6 +532,13 @@ export function MailView() {
               </button>
             </div>
             <FolderNav folders={folders} current={folder} onOpen={(path) => go(path, null)} onChanged={(next, path) => (setFolders(next), path !== undefined && go(path ?? "INBOX", null))} />
+            {later.some((l) => l.kind !== "snooze") && (
+              <button onClick={() => setLaterOpen(true)} className="press mt-2 flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-ink-2 hover:bg-ink/[0.04]">
+                <Clock className="size-4 text-ink-3" />
+                <span className="flex-1">Programmés</span>
+                <span className="tabular text-[12px] text-ink-3">{later.filter((l) => l.kind !== "snooze").length}</span>
+              </button>
+            )}
           </nav>
           <ResizeHandle label="Largeur des dossiers" className="max-lg:hidden" width={layout.folders} min={160} max={340} onChange={(w) => setLayout({ ...layout, folders: w })} onReset={() => setLayout({ ...layout, folders: LAYOUT.folders })} />
         </>
@@ -625,6 +665,9 @@ export function MailView() {
             onMove={(uids) => setMoving(uids ?? [openUid])}
             onBack={() => go(folder, null)}
             onSeen={markSeen}
+            later={later}
+            onLater={loadLater}
+            sent={current?.specialUse === "\\Sent"}
           /> : <EmptyReader count={current?.unread ?? 0} />}
       </section>
       {moving && (
@@ -639,7 +682,8 @@ export function MailView() {
         />
       )}
       {help && <ShortcutsHelp onClose={() => setHelp(false)} />}
-      {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} signature={info.signature} onClose={() => setCompose(null)} onSent={sent} />}
+      {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} signature={info.signature} onClose={() => setCompose(null)} onSent={sent} onScheduled={scheduled} />}
+      {laterOpen && <LaterPanel items={later} onClose={() => setLaterOpen(false)} onChanged={loadLater} />}
     </div>
   );
 }
@@ -1077,7 +1121,14 @@ function Reader({
   onMove,
   onBack,
   onSeen,
+  later,
+  onLater,
+  sent,
 }: {
+  later: MailLaterInfo[];
+  onLater: () => void;
+  /** In the Sent folder: "Relance-moi" instead of "Reporter". */
+  sent: boolean;
   folder: string;
   uid: number;
   me: string;
@@ -1203,6 +1254,40 @@ function Reader({
     );
 
   const n = conversation ? ` la conversation (${folderUids.length > 1 ? `${folderUids.length} mails` : "1 mail"})` : "";
+  const waiting = later.find((l) => l.kind !== "send" && ((!!mail.messageId && l.messageIds.includes(mail.messageId)) || l.refs.some((r) => r.folder === folder && r.uid === uid)));
+  const snoozed = waiting?.kind === "snooze";
+  const snoozeTo = async (until: Date) => {
+    try {
+      await api("/api/mail/later", { method: "POST", json: { action: "snooze", folder, uids: conversation ? folderUids : [uid], until: until.toISOString() } });
+      onLater();
+      onBack();
+      toast.success(`Reporté jusqu'à ${whenText(until)}`, { description: "Il revient en haut de la boîte, non lu." });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const followUp = async (at: Date) => {
+    try {
+      await api("/api/mail/later", { method: "POST", json: { action: "followup", folder, uid, at: at.toISOString() } });
+      onLater();
+      toast.success(`Relance ${whenText(at)} si personne n'a répondu`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const endWaiting = async () => {
+    if (!waiting) return;
+    try {
+      await api(`/api/mail/later?id=${encodeURIComponent(waiting.id)}`, { method: "DELETE" });
+      onLater();
+      if (waiting.kind === "snooze") {
+        onBack();
+        toast.success("De retour dans la boîte de réception");
+      } else toast("Relance annulée");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
   return (
     <article className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line px-3 md:px-6">
@@ -1220,6 +1305,18 @@ function Reader({
         {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} className="max-sm:hidden" /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} className="max-sm:hidden" />}
         <Action label={`Déplacer${n} (V)`} Icon={FolderInput} onClick={move} />
         <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} className="max-sm:hidden" />
+        {sent ? (
+          <WhenMenu kind="followup" title="Relance-moi sans réponse" onPick={(d) => void followUp(d)}>
+            {(toggle, open) => <Action label="Relance-moi si pas de réponse" Icon={BellRing} onClick={toggle} active={open} />}
+          </WhenMenu>
+        ) : (
+          !isDrafts &&
+          !snoozed && (
+            <WhenMenu kind="snooze" title={`Reporter${n} jusqu'à`} onPick={(d) => void snoozeTo(d)}>
+              {(toggle, open) => <Action label={`Reporter${n}`} Icon={AlarmClock} onClick={toggle} active={open} />}
+            </WhenMenu>
+          )
+        )}
         <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
         <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
         {isDrafts ? (
@@ -1249,6 +1346,15 @@ function Reader({
       {gateway === "ticket" && <TicketDialog mail={mail} onClose={() => setGateway(null)} />}
       <div className="scroll-thin flex-1 overflow-y-auto px-6 py-6 max-md:px-4">
         <div className="mx-auto max-w-[720px]">
+          {waiting && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-accent/25 bg-accent-soft px-3 py-2 text-[13px] text-accent">
+              {waiting.kind === "snooze" ? <AlarmClock className="size-4" /> : <BellRing className="size-4" />}
+              <span className="min-w-0 flex-1">{waiting.kind === "snooze" ? `Reporté : revient ${whenText(waiting.due)}` : `Relance ${whenText(waiting.due)} si personne n'a répondu`}</span>
+              <button onClick={() => void endWaiting()} className="press h-7 rounded-md px-2 font-medium hover:bg-accent/10">
+                {waiting.kind === "snooze" ? "Faire revenir maintenant" : "Annuler la relance"}
+              </button>
+            </div>
+          )}
           <h2 className="text-[22px] leading-tight font-semibold tracking-[-0.01em]">{mail.subject || "(sans objet)"}</h2>
           {conversation ? (
             <ol className="mt-4 flex flex-col gap-2">
@@ -1276,6 +1382,48 @@ function Reader({
         </div>
       </div>
     </article>
+  );
+}
+
+/** The scheduled sends and the follow-ups: send now, or cancel. */
+function LaterPanel({ items, onClose, onChanged }: { items: MailLaterInfo[]; onClose: () => void; onChanged: () => void }) {
+  const list = items.filter((i) => i.kind !== "snooze");
+  const act = async (i: MailLaterInfo, now: boolean) => {
+    try {
+      if (now) await api("/api/mail/later", { method: "POST", json: { action: "now", id: i.id } });
+      else await api(`/api/mail/later?id=${encodeURIComponent(i.id)}`, { method: "DELETE" });
+      onChanged();
+      toast.success(now ? "Mail envoyé" : i.kind === "send" ? "Envoi annulé" : "Relance annulée");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <Modal title="Programmés" onClose={onClose}>
+      {!list.length && <p className="text-[13px] text-ink-3">Rien de prévu.</p>}
+      <ul className="flex flex-col gap-2">
+        {list.map((i) => (
+          <li key={i.id} className="rounded-xl border border-line p-3">
+            <p className="flex items-center gap-1.5 text-[12px] text-ink-3">
+              {i.kind === "send" ? <Send className="size-3.5" /> : <BellRing className="size-3.5" />}
+              {i.kind === "send" ? `Part ${whenText(i.due)}` : `Relance ${whenText(i.due)}`}
+            </p>
+            <p className="mt-1 truncate text-[13.5px] font-medium">{i.subject || "(sans objet)"}</p>
+            {i.to && <p className="truncate text-[12.5px] text-ink-3">À {i.to}</p>}
+            <div className="mt-2 flex gap-2">
+              {i.kind === "send" && (
+                <Button variant="primary" onClick={() => void act(i, true)}>
+                  Envoyer maintenant
+                </Button>
+              )}
+              <Button variant="ghost" onClick={() => void act(i, false)}>
+                {i.kind === "send" ? "Annuler l'envoi" : "Annuler la relance"}
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Modal>
   );
 }
 

@@ -145,7 +145,7 @@ export type ServerEvent =
   | { type: "message-deleted"; conversationId: string; id: number; parentId: number | null }
   | { type: "refresh" }
   /** My mailbox changed (new mails, flags, folders) or its connection status did. */
-  | { type: "mail"; status: MailStatus; folders: string[]; live?: boolean; added?: MailSummary[]; alert?: MailSummary[]; sent?: { id: string; error?: string } };
+  | { type: "mail"; status: MailStatus; folders: string[]; live?: boolean; added?: MailSummary[]; alert?: MailSummary[]; sent?: { id: string; error?: string }; reminder?: MailReminder };
 
 // ---- Mails
 
@@ -171,6 +171,21 @@ export type MailAccountInfo = {
 };
 
 export type MailNotify = "all" | "important" | "known" | "off";
+
+/** Something the server tells me about later: a mail nobody answered, a scheduled send that left. */
+export type MailReminder = { title: string; body: string; folder?: string; uid?: number };
+
+/** What waits on the server: a scheduled send, a snoozed mail, a follow-up. */
+export type MailLaterInfo = {
+  id: string;
+  kind: "send" | "snooze" | "followup";
+  due: string;
+  subject: string;
+  to: string;
+  messageIds: string[];
+  /** Where the mails are now (« Reportés » for a snooze, Sent for a follow-up). */
+  refs: { folder: string; uid: number }[];
+};
 
 /** The tabs of the sorted inbox. */
 export type MailCategory = "important" | "newsletter" | "notification";
