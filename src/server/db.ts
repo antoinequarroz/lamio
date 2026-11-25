@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { mentionedIds } from "@/lib/mentions";
-import type { Conversation, FileInfo, Message, Role, SearchHit, User } from "@/lib/types";
+import type { CallInfo, Conversation, FileInfo, Message, Role, SearchHit, User } from "@/lib/types";
 
 export const dataDir = () => path.resolve(process.env.DATA_DIR ?? "./data");
 export const filesDir = () => path.join(dataDir(), "files");
@@ -202,6 +202,8 @@ export function db() {
   addColumn("mail_messages", "thread_id", "text");
   conn.exec("create index if not exists mail_messages_thread on mail_messages (user_id, thread_id)");
   conn.exec("create index if not exists mail_messages_mid on mail_messages (user_id, message_id)");
+  // A video call started in the conversation (its room lives in Alfred): {"slug","title"} as JSON.
+  addColumn("messages", "call", "text");
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;
@@ -465,7 +467,17 @@ export function openDm(me: string, other: string): { id: string; created: boolea
 
 // ---- Messages
 
-type MessageRow = { id: number; conversation_id: string; user_id: string; body: string; created_at: string; edited_at: string | null; parent_id: number | null };
+type MessageRow = { id: number; conversation_id: string; user_id: string; body: string; created_at: string; edited_at: string | null; parent_id: number | null; call?: string | null };
+
+function callOf(raw: string | null | undefined): CallInfo | null {
+  if (!raw) return null;
+  try {
+    const c = JSON.parse(raw) as CallInfo;
+    return typeof c.slug === "string" && typeof c.title === "string" ? { slug: c.slug, title: c.title } : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Adds to each message its files, its reactions and the size of its thread. */
 function hydrate(rows: MessageRow[]): Message[] {
@@ -493,6 +505,7 @@ function hydrate(rows: MessageRow[]): Message[] {
       files: files.filter((f) => f.message_id === r.id).map(({ id, name, mime, size }) => ({ id, name, mime, size })),
       reactions: [...grouped].map(([emoji, userIds]) => ({ emoji, userIds })),
       mentionIds: mentions.filter((x) => x.message_id === r.id).map((x) => x.user_id),
+      call: callOf(r.call),
     };
   });
 }
@@ -506,6 +519,22 @@ export function listMessages(conversationId: string, before?: number): { message
     .all(conversationId, before ?? Number.MAX_SAFE_INTEGER, PAGE + 1) as MessageRow[];
   const hasMore = rows.length > PAGE;
   return { messages: hydrate(rows.slice(0, PAGE).reverse()), hasMore };
+}
+
+/** The name of a call: "#channel", or both names for a direct message (everyone sees the same room name). */
+export function callTitle(conversationId: string, userId: string): string {
+  const c = db().prepare("select kind, name, dm_key from conversations where id = ?").get(conversationId) as { kind: string; name: string; dm_key: string | null } | undefined;
+  if (!c) return "Appel";
+  if (c.kind === "channel") return `#${c.name}`;
+  const other = c.dm_key ? getUser(otherOf(c.dm_key, userId)) : null;
+  const me = getUser(userId);
+  return other && me && other.id !== userId ? `${me.name} · ${other.name}` : "Appel";
+}
+
+/** Whether this person can read a conversation where this call was started (and so may join it). */
+export function mayJoinCall(slug: string, userId: string): boolean {
+  const rows = db().prepare("select conversation_id from messages where call is not null and json_extract(call, '$.slug') = ?").all(slug) as { conversation_id: string }[];
+  return rows.some((r) => accessTo(r.conversation_id, userId) !== null);
 }
 
 /** The replies of a thread, oldest first. */
@@ -523,15 +552,17 @@ export function getMessage(id: number): Message | null {
  * With `parentId` it is a reply in that message's thread (which must be in the same conversation,
  * and not a reply itself). Null when there is nothing to post or the thread does not exist.
  */
-export function addMessage(input: { conversationId: string; userId: string; body: string; fileIds: string[]; parentId?: number }): Message | null {
+export function addMessage(input: { conversationId: string; userId: string; body: string; fileIds: string[]; parentId?: number; call?: CallInfo }): Message | null {
   return db().transaction(() => {
     if (input.parentId !== undefined) {
       const parent = db().prepare("select conversation_id, parent_id from messages where id = ?").get(input.parentId) as { conversation_id: string; parent_id: number | null } | undefined;
       if (!parent || parent.conversation_id !== input.conversationId || parent.parent_id !== null) return null;
     }
     const mine = db().prepare("select 1 from files where id = ? and user_id = ? and message_id is null");
-    if (!input.body && !input.fileIds.some((f) => mine.get(f, input.userId))) return null;
-    const { lastInsertRowid } = db().prepare("insert into messages (conversation_id, user_id, body, created_at, parent_id) values (?, ?, ?, ?, ?)").run(input.conversationId, input.userId, input.body, now(), input.parentId ?? null);
+    if (!input.body && !input.call && !input.fileIds.some((f) => mine.get(f, input.userId))) return null;
+    const { lastInsertRowid } = db()
+      .prepare("insert into messages (conversation_id, user_id, body, created_at, parent_id, call) values (?, ?, ?, ?, ?, ?)")
+      .run(input.conversationId, input.userId, input.body, now(), input.parentId ?? null, input.call ? JSON.stringify(input.call) : null);
     const id = Number(lastInsertRowid);
     for (const fileId of input.fileIds) db().prepare("update files set message_id = ? where id = ? and user_id = ? and message_id is null").run(id, fileId, input.userId);
     setMentions(id, input.conversationId, input.body);

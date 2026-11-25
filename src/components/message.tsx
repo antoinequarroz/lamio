@@ -7,6 +7,7 @@ import { splitMentions } from "@/lib/mentions";
 import { useApp } from "@/lib/store";
 import type { Message } from "@/lib/types";
 import { api, clock, cn, fileSize } from "@/lib/utils";
+import { CallCard } from "./call";
 import { Avatar, Button } from "./ui";
 
 const INLINE = /^image\/(png|jpeg|gif|webp|avif)$/;
@@ -94,6 +95,8 @@ export function MessageItem({ message: m, grouped, inThread, onOpenThread, onCha
           )
         )}
 
+        {m.call && <CallCard call={m.call} createdAt={m.createdAt} />}
+
         {m.files.length > 0 && (
           <div className="mt-1.5 mb-1 flex flex-wrap gap-2">
             {m.files.map((f) =>
@@ -168,7 +171,7 @@ export function MessageItem({ message: m, grouped, inThread, onOpenThread, onCha
                   <MessageSquare className="size-4" />
                 </button>
               )}
-              {mine && (
+              {mine && !m.call && (
                 <button onClick={() => setEditing(true)} aria-label="Modifier le message" title="Modifier" className={action}>
                   <Pencil className="size-3.5" />
                 </button>

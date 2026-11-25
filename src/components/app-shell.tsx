@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Hash, LayoutGrid, Lock, Mail, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, CalendarDays, Hash, LayoutGrid, Lock, Mail, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -11,6 +11,7 @@ import { useStored } from "@/lib/use-stored";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
 import { APP_NAME, cn, moduleLink } from "@/lib/utils";
+import { CallWindow } from "./call";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
 import { ResizeHandle } from "./resize-handle";
@@ -21,9 +22,16 @@ import { Avatar, Kbd, primaryClass } from "./ui";
 const NAV = [
   { href: "/c", label: "Messagerie", Icon: MessagesSquare },
   { href: "/mail", label: "Mails", Icon: Mail },
+  { href: "/calendar", label: "Calendrier", Icon: CalendarDays },
   { href: "/modules", label: "Modules", Icon: LayoutGrid },
   { href: "/settings", label: "Réglages", Icon: Settings },
 ];
+
+/** The tabs I see: the Calendrier only when Alfred is plugged in and open to me. */
+const useNav = () => {
+  const { calendar } = useApp();
+  return NAV.filter((n) => n.href !== "/calendar" || calendar);
+};
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -72,6 +80,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       </main>
       <CommandMenu />
       <Notifier />
+      <CallWindow />
       {dialog === "channel" && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === "dm" && <NewDmDialog onClose={() => setDialog(null)} />}
       <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
@@ -86,6 +95,7 @@ function Rail({ onExpand }: { onExpand: () => void }) {
   const pathname = usePathname();
   const { me, conversations, mail, setCommandOpen, setDialog } = useApp();
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
+  const nav = useNav();
   const button = "press relative flex size-10 items-center justify-center rounded-lg";
   return (
     <>
@@ -98,7 +108,7 @@ function Rail({ onExpand }: { onExpand: () => void }) {
       <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" title="Rechercher (⌘K)" className={cn(button, "mb-2 text-ink-2 hover:bg-ink/[0.05] hover:text-ink")}>
         <Search className="size-4" />
       </button>
-      {NAV.map(({ href, label, Icon }) => {
+      {nav.map(({ href, label, Icon }) => {
         const active = pathname.startsWith(href);
         const dot = (href === "/c" && unread > 0) || (href === "/mail" && !!mail?.unread);
         return (
@@ -125,6 +135,7 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
   const mine = conversations.reduce((n, c) => n + forMe(c), 0);
   const linked = modules.filter((m) => m.status === "linked" && moduleLink(m));
+  const nav = useNav();
 
   return (
     <>
@@ -148,7 +159,7 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
       </div>
 
       <nav className="flex flex-col gap-px">
-        {NAV.map(({ href, label, Icon }) => {
+        {nav.map(({ href, label, Icon }) => {
           const active = pathname.startsWith(href);
           return (
             <Link
@@ -229,7 +240,7 @@ const forMe = (c: Conversation) => (c.kind === "dm" ? c.unread : c.mentions);
 /** Tells me about a mention or a direct message that arrives while I am looking elsewhere. */
 function Notifier() {
   const router = useRouter();
-  const { listen, isReading, conversations, userById, titleOf, me } = useApp();
+  const { listen, isReading, conversations, userById, titleOf, me, joinCall } = useApp();
   const latest = useRef({ conversations, userById, titleOf });
   latest.current = { conversations, userById, titleOf };
   const pathname = useRef("");
@@ -253,6 +264,15 @@ function Notifier() {
         if (event.type !== "message") return;
         const m = event.message;
         const conversation = latest.current.conversations.find((c) => c.id === m.conversationId);
+        // A call started by someone else, in a conversation I am in: an invitation to join.
+        if (m.call && m.userId !== me.id) {
+          const author = latest.current.userById(m.userId)?.name ?? "Quelqu'un";
+          const where = conversation ? latest.current.titleOf(conversation) : "";
+          const join = () => void joinCall(m.call!.slug, m.call!.title);
+          if (document.hidden) deviceNotify(`${author} t'appelle`, where, `call${m.id}`, join);
+          else toast(`${author} lance un appel`, { id: `call:${m.call.slug}`, description: where, duration: 30_000, action: { label: "Rejoindre", onClick: join } });
+          return;
+        }
         // Not in my list yet: the first message of a new direct conversation.
         const direct = !conversation || conversation.kind === "dm";
         if (m.userId === me.id || isReading(m.conversationId) || !(direct || m.mentionIds.includes(me.id))) return;
@@ -264,7 +284,7 @@ function Notifier() {
         if (document.hidden) deviceNotify(title, text, `m${m.id}`, open);
         else toast(title, { description: text.length > 140 ? `${text.slice(0, 140)}…` : text, action: { label: "Ouvrir", onClick: open } });
       }),
-    [listen, isReading, me.id, router],
+    [listen, isReading, me.id, router, joinCall],
   );
   return null;
 }
@@ -317,10 +337,11 @@ export function ConversationList() {
 function MobileBar() {
   const pathname = usePathname();
   const { setCommandOpen, setDialog } = useApp();
+  const nav = useNav();
   return (
     <div className="flex items-center gap-1 border-b border-line px-3 py-2 md:hidden">
       <Logo className="mr-1 size-6" />
-      {NAV.map(({ href, label, Icon }) => (
+      {nav.map(({ href, label, Icon }) => (
         <Link key={href} href={href} aria-label={label} className={cn("flex size-9 items-center justify-center rounded-lg", pathname.startsWith(href) ? "bg-surface text-accent shadow-card" : "text-ink-3")}>
           <Icon className="size-[18px]" />
         </Link>

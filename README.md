@@ -52,6 +52,7 @@ Copier `.env.example` en `.env.local` (en local) ou `.env` (sur le VPS). Rien n'
 | `DATA_DIR` | Dossier de la base SQLite et des fichiers (`./data` par défaut). |
 | `MAX_FILE_MB` | Taille maximale d'un fichier joint (25 Mo par défaut). |
 | `CAIRN_URL`, `METRICOVE_URL`, `ALFRED_URL`, `NINO_URL`, `TICKUP_URL` | Adresse d'un outil de la suite, pour le brancher. |
+| `ALFRED_API_TOKEN` | Jeton créé dans Alfred (Réglages › Accès à l'agenda) : ouvre l'onglet **Calendrier**. `alfw_…` (lecture et écriture) pour créer et modifier les événements depuis Lamio, `alf_…` pour seulement les voir. `ALFRED_API_URL` (facultatif) : où le serveur joint Alfred. |
 | `COMPTE_URL`, `COMPTE_CLIENT_SECRET`, `APP_URL` | Branche Lamio sur le Compte Postmelo (compte unique de la suite). Voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). |
 | `CAIRN_SSO_SECRET`, `METRICOVE_SSO_SECRET`, … | Secret partagé avec l'outil (32 caractères au moins), pour y entrer avec son compte Lamio. |
 

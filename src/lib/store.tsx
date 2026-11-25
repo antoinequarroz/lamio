@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { setAppBadge } from "./notifications";
+import { toast } from "sonner";
 import type { AppState, Conversation, ServerEvent, User } from "./types";
 import { api, APP_NAME } from "./utils";
 
@@ -25,7 +26,13 @@ type Store = AppState & {
   setCommandOpen: (open: boolean) => void;
   dialog: "channel" | "dm" | null;
   setDialog: (dialog: "channel" | "dm" | null) => void;
+  /** The video call open in the call window (Alfred's room page), if any. */
+  call: OpenCall | null;
+  joinCall: (slug: string, title: string) => Promise<void>;
+  leaveCall: () => void;
 };
+
+export type OpenCall = { slug: string; title: string; url: string };
 
 const Ctx = createContext<Store | null>(null);
 
@@ -39,6 +46,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
+  const [call, setCall] = useState<OpenCall | null>(null);
+
+  /** Asks Lamio's server for my entry to the call (Alfred gives it), then opens the call window. */
+  const joinCall = useCallback(async (slug: string, title: string) => {
+    try {
+      const { url } = await api<{ url: string }>(`/api/calls/${encodeURIComponent(slug)}/join`, { method: "POST" });
+      setCall({ slug, title, url });
+      // The invitation to this call, if it is still on screen, has been answered.
+      toast.dismiss(`call:${slug}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }, []);
+  const leaveCall = useCallback(() => setCall(null), []);
   const [dialog, setDialog] = useState<Store["dialog"]>(null);
   const active = useRef<string | null>(null);
   const meId = useRef("");
@@ -138,8 +159,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCommandOpen,
       dialog,
       setDialog,
+      call,
+      joinCall,
+      leaveCall,
     };
-  }, [state, error, reload, setActive, markRead, isReading, listen, commandOpen, dialog]);
+  }, [state, error, reload, setActive, markRead, isReading, listen, commandOpen, dialog, call, joinCall, leaveCall]);
 
   if (!store) {
     return error ? (
