@@ -8,7 +8,7 @@ import type { CalendarEvent, CalendarInfo, EventInput, RepeatRule } from "@/lib/
 import { api, cn } from "@/lib/utils";
 import { Button, Field, inputClass, Modal } from "../ui";
 
-export type Draft = { mode: "new"; start: Date; end: Date; allDay: boolean; calendarId: string } | { mode: "edit"; event: CalendarEvent };
+export type Draft = { mode: "new"; start: Date; end: Date; allDay: boolean; calendarId: string; title?: string; description?: string } | { mode: "edit"; event: CalendarEvent };
 
 const REPEATS: { id: RepeatRule; label: string }[] = [
   { id: "none", label: "Ne se répète pas" },
@@ -33,7 +33,7 @@ const at = (day: string, time: string) => {
 /** The form's starting values: a new event, or the occurrence that was clicked. */
 function initial(draft: Draft) {
   if (draft.mode === "new") {
-    return { title: "", calendarId: draft.calendarId, allDay: draft.allDay, startDay: dayKey(draft.start), startTime: hm(draft.start), endDay: dayKey(draft.allDay ? addDays(draft.end, -1) : draft.end), endTime: hm(draft.end), repeat: "none" as RepeatRule, location: "", description: "" };
+    return { title: draft.title ?? "", calendarId: draft.calendarId, allDay: draft.allDay, startDay: dayKey(draft.start), startTime: hm(draft.start), endDay: dayKey(draft.allDay ? addDays(draft.end, -1) : draft.end), endTime: hm(draft.end), repeat: "none" as RepeatRule, location: "", description: draft.description ?? "" };
   }
   const e = draft.event;
   if (e.allDay) {

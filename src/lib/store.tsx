@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { setAppBadge } from "./notifications";
 import { toast } from "sonner";
 import type { AppState, Conversation, ServerEvent, User } from "./types";
 import { api, APP_NAME } from "./utils";
@@ -97,6 +98,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       source.onmessage = (e) => {
         const event = JSON.parse(e.data) as ServerEvent;
         if (event.type === "refresh") return void reload();
+        // The badge of the Mails tab follows the inbox.
+        if (event.type === "mail") void reload();
         if (event.type === "message") {
           const { conversationId, id, userId, mentionIds } = event.message;
           const reading = conversationId === active.current && !document.hidden;
@@ -130,9 +133,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const unread = state?.conversations.reduce((n, c) => n + c.unread, 0) ?? 0;
+  const mailUnread = state?.mail?.unread ?? 0;
   useEffect(() => {
     document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
   }, [unread]);
+  // The app's icon counts the unread messages and the unread mails of the inbox.
+  useEffect(() => setAppBadge(unread + mailUnread), [unread, mailUnread]);
 
   const store = useMemo<Store | null>(() => {
     if (!state) return null;

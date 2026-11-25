@@ -22,8 +22,29 @@ Pour viser un autre serveur que https://lamio.postmelo.ch :
 LAMIO_URL=https://lamio.exemple.ch npm run build
 ```
 
+## L'app iPhone
+
+Le même code donne l'app iPhone : la page d'attente, puis le Lamio en ligne. Les liens vers les autres outils s'ouvrent dans Safari, et la connexion par le Compte Postmelo reste dans l'app.
+
+Il faut en plus les cibles iOS de Rust et CocoaPods :
+
+```bash
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+brew install cocoapods
+```
+
+Puis, dans `desktop/` :
+
+```bash
+npm install
+npm run ios:init                    # une fois : crée le projet Xcode dans src-tauri/gen/apple
+npm run ios:dev -- "iPhone 16"      # lance l'app dans le simulateur
+```
+
+L'identifiant de l'app iPhone est `ch.postmelo.lamio` (`src-tauri/tauri.ios.conf.json`). Pour l'installer sur un vrai iPhone ou la publier, il faut un compte développeur Apple.
+
 ## À savoir
 
 - L'app n'est pas signée par Apple. Sur ton Mac, celle que tu construis s'ouvre normalement. Sur le Mac de quelqu'un d'autre, il faut un clic droit puis « Ouvrir » la première fois, ou un compte développeur Apple pour la signer.
-- Les notifications de l'appareil ne passent pas encore dans cette app (la fenêtre n'a pas l'interface de notification des navigateurs). Les notifications dans l'app marchent.
+- Les notifications du Mac (un message, un nouveau mail) passent par le Centre de notifications, et le nombre de non-lus s'affiche sur l'icône du Dock. La première fois, macOS demande l'autorisation (Réglages › Notifications de Lamio).
 - L'icône se refait avec `npm run icons` à partir de `icon.png`.

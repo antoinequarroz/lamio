@@ -1,11 +1,11 @@
 "use client";
 
 import { Command } from "cmdk";
-import { Hash, LayoutGrid, Lock, MessageSquareText, Plus, Settings, SquarePen, User } from "lucide-react";
+import { Hash, LayoutGrid, Lock, Mail, MessageSquareText, Plus, Settings, SquarePen, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
-import type { SearchHit } from "@/lib/types";
+import type { MailSummary, SearchHit } from "@/lib/types";
 import { api, clock, dayLabel } from "@/lib/utils";
 
 export function CommandMenu() {
@@ -13,15 +13,25 @@ export function CommandMenu() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [mails, setMails] = useState<MailSummary[]>([]);
 
   // Messages are searched on the server, a moment after typing stops.
   useEffect(() => {
     const q = query.trim();
-    if (!open || q.length < 2) return setHits([]);
+    if (!open || q.length < 2) {
+      setHits([]);
+      setMails([]);
+      return;
+    }
     let current = true;
     const timer = setTimeout(() => {
       api<{ hits: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`).then(
         (r) => current && setHits(r.hits),
+        () => {},
+      );
+      // The mails too, from the local copy of the mailbox (the Mails tab searches the server as well).
+      api<{ messages: MailSummary[] }>(`/api/mail/search?q=${encodeURIComponent(q)}&limit=5`).then(
+        (r) => current && setMails(r.messages),
         () => {},
       );
     }, 180);
@@ -57,7 +67,7 @@ export function CommandMenu() {
       <Command.Input value={query} onValueChange={setQuery} placeholder="Chercher un message, un canal, une personne…" className="h-12 w-full border-b border-line bg-transparent px-4 text-[14.5px] outline-none placeholder:text-ink-3" />
       <Command.List className="scroll-thin max-h-[380px] overflow-y-auto p-2 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3">
         {/* The menu only counts its own matches: with messages found by the server, it is not empty. */}
-        {!hits.length && <Command.Empty className="py-10 text-center text-[13px] text-ink-3">Aucun résultat.</Command.Empty>}
+        {!hits.length && !mails.length && <Command.Empty className="py-10 text-center text-[13px] text-ink-3">Aucun résultat.</Command.Empty>}
         <Command.Group heading="Canaux">
           {conversations
             .filter((c) => c.kind === "channel")
@@ -105,12 +115,39 @@ export function CommandMenu() {
             })}
           </Command.Group>
         )}
+        {mails.length > 0 && (
+          <Command.Group heading="Mails" forceMount>
+            {mails.map((m) => (
+              <Command.Item
+                key={`${m.folder}|${m.uid}`}
+                forceMount
+                value={`mail-${m.folder}-${m.uid}`}
+                onSelect={() => run(() => router.push(`/mail?${new URLSearchParams({ ...(m.folder !== "INBOX" && { f: m.folder }), m: String(m.uid) })}`))}
+                className="flex cursor-default items-start gap-2.5 rounded-lg px-2 py-1.5 text-[13.5px] text-ink-2 data-[selected=true]:bg-ink/[0.05] data-[selected=true]:text-ink"
+              >
+                <Mail className="mt-0.5 size-4 shrink-0 text-ink-3" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline gap-1.5 text-[11.5px] text-ink-3">
+                    <span className="truncate font-medium text-ink-2">{m.from.name || m.from.address}</span>
+                    <span className="ml-auto shrink-0 first-letter:uppercase">
+                      {dayLabel(m.date)}, {clock(m.date)}
+                    </span>
+                  </span>
+                  <span className="block truncate">{m.subject || "(sans objet)"}</span>
+                </span>
+              </Command.Item>
+            ))}
+          </Command.Group>
+        )}
         <Command.Group heading="Actions">
           <Item onSelect={() => run(() => setDialog("dm"))} icon={<SquarePen className="size-4" />}>
             Nouveau message
           </Item>
           <Item onSelect={() => run(() => setDialog("channel"))} icon={<Plus className="size-4" />}>
             Créer un canal
+          </Item>
+          <Item onSelect={() => run(() => router.push("/mail"))} icon={<Mail className="size-4" />}>
+            Mails
           </Item>
           <Item onSelect={() => run(() => router.push("/modules"))} icon={<LayoutGrid className="size-4" />}>
             Modules

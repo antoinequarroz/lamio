@@ -1,0 +1,1921 @@
+"use client";
+
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, Clock, MailOpen, MailX, AlarmClock, BellRing, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, Sparkles, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { toast } from "sonner";
+import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
+import { AiPanel, aiTextToHtml } from "@/components/mail/ai-help";
+import { ShareDialog, TicketDialog } from "@/components/mail/gateways";
+import { WhenMenu, whenText } from "@/components/mail/when-menu";
+import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
+import { ResizeHandle } from "@/components/resize-handle";
+import { Avatar, Button, Card, Kbd, Modal } from "@/components/ui";
+import { useApp } from "@/lib/store";
+import { useStored } from "@/lib/use-stored";
+import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailCategory, MailContent, MailFolder, MailLaterInfo, MailSummary } from "@/lib/types";
+import { api, cn, fileSize } from "@/lib/utils";
+
+const PAGE = 50;
+const THREADS_KEY = "mail-threads";
+const LAYOUT = { folders: 208, list: 380, foldersHidden: false };
+
+/** The tabs of the sorted inbox; "all" turns the sorting off. */
+type InboxTab = MailCategory | "all";
+const TABS: { id: InboxTab; label: string }[] = [
+  { id: "important", label: "Important" },
+  { id: "newsletter", label: "Newsletters" },
+  { id: "notification", label: "Notifications" },
+  { id: "all", label: "Tout" },
+];
+const CATEGORY_NAME: Record<MailCategory, string> = { important: "Important", newsletter: "Newsletters", notification: "Notifications" };
+const isTab = (v: unknown): v is InboxTab => TABS.some((t) => t.id === v);
+type Page = { messages: MailSummary[]; hasMore: boolean; categories?: Record<MailCategory, number> };
+
+const FOLDER_ICONS: Record<string, typeof Inbox> = { "\\Inbox": Inbox, "\\Sent": Send, "\\Drafts": FileText, "\\Archive": Archive, "\\Junk": ShieldAlert, "\\Trash": Trash2, "\\Flagged": Flag };
+
+/** "14:32" today, "hier", "lun." this week, "12 nov." this year, else "12.11.2025". */
+export function shortDate(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const days = Math.floor((new Date(now.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86_400_000);
+  if (days <= 0) return d.toLocaleTimeString("fr-CH", { hour: "2-digit", minute: "2-digit" });
+  if (days === 1) return "hier";
+  if (days < 7) return d.toLocaleDateString("fr-CH", { weekday: "short" });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString("fr-CH", { day: "numeric", month: "short" });
+  return d.toLocaleDateString("fr-CH");
+}
+
+const who = (a: { name: string; address: string }) => a.name || a.address || "(inconnu)";
+const keyOf = (m: { folder: string; uid: number }) => `${m.folder}|${m.uid}`;
+
+type Account = { enabled: boolean; account: MailAccountInfo | null };
+
+/** A search in progress: the words, where, and the filters. */
+type MailSearch = { q: string; in: string | null; unread: boolean; attachments: boolean; within: "" | "30" | "365" };
+
+export function MailView() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const { listen } = useApp();
+  const [account, setAccount] = useState<Account | null>(null);
+  const [folders, setFolders] = useState<MailFolder[]>([]);
+  const [messages, setMessages] = useState<MailSummary[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const [syncing, setSyncing] = useState(false);
+  const [compose, setCompose] = useState<ComposeInit | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [moving, setMoving] = useState<number[] | null>(null);
+  const [help, setHelp] = useState(false);
+  // The last action that Z undoes (a move, a read or a flag).
+  const undoLast = useRef<(() => Promise<void>) | null>(null);
+  // "g" then a letter: go to a folder.
+  const goPrefix = useRef(0);
+  const [search, setSearch] = useState<MailSearch | null>(null);
+  const [results, setResults] = useState<MailSummary[]>([]);
+  const [searching, setSearching] = useState<"" | "local" | "server">("");
+  // The widths of the folders and of the list, and whether the folders are folded away.
+  const [layout, setLayout] = useStored("mail-layout", LAYOUT, (v): v is typeof LAYOUT => !!v && typeof (v as typeof LAYOUT).folders === "number" && typeof (v as typeof LAYOUT).list === "number");
+  // "Par conversation" (one row per exchange) or "Mail par mail": a choice kept on this device.
+  const [threaded, setThreaded] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(THREADS_KEY) === "off") setThreaded(false);
+    } catch {}
+  }, []);
+  const toggleThreads = useCallback(() => {
+    setThreaded((t) => {
+      try {
+        localStorage.setItem(THREADS_KEY, t ? "off" : "on");
+      } catch {}
+      return !t;
+    });
+  }, []);
+  // The sorted inbox: the tab shown (kept on this device) and the unread mails of each tab.
+  const [tab, setTab] = useStored<InboxTab>("mail-tab", "important", isTab);
+  const [categories, setCategories] = useState<Record<MailCategory, number> | null>(null);
+  const tabQuery = useCallback((path: string) => (path === "INBOX" && tab !== "all" ? `&category=${tab}` : ""), [tab]);
+  // Mails waiting to leave or just sent: to reopen them on "Annuler" or when sending failed.
+  const outgoing = useRef(new Map<string, SendState>());
+
+  const folder = params.get("f") || "INBOX";
+  const openUid = Number(params.get("m")) || null;
+  const current = folders.find((f) => f.path === folder);
+
+  const go = useCallback(
+    (f: string, uid: number | null) => {
+      const q = new URLSearchParams();
+      if (f !== "INBOX") q.set("f", f);
+      if (uid) q.set("m", String(uid));
+      const s = q.toString();
+      router.replace(s ? `/mail?${s}` : "/mail", { scroll: false });
+    },
+    [router],
+  );
+
+  // How many are shown, so a live refresh keeps the pages already loaded.
+  const shown = useRef(PAGE);
+  shown.current = Math.max(PAGE, messages.length);
+
+  const loadFolders = useCallback(async () => {
+    const [a, f] = await Promise.all([api<Account>("/api/mail/account"), api<{ folders: MailFolder[] }>("/api/mail/folders")]);
+    setAccount(a);
+    setFolders(f.folders);
+  }, []);
+
+  const loadMessages = useCallback(
+    async (path: string, limit = PAGE) => {
+      const r = await api<Page>(`/api/mail/messages?folder=${encodeURIComponent(path)}&limit=${Math.min(200, limit)}${threaded ? "&threads=1" : ""}${tabQuery(path)}`);
+      setMessages(r.messages);
+      setHasMore(r.hasMore);
+      setCategories(r.categories ?? null);
+      setLoading(false);
+    },
+    [threaded, tabQuery],
+  );
+
+  useEffect(() => {
+    void loadFolders().catch(() => setAccount({ enabled: false, account: null }));
+  }, [loadFolders]);
+
+  useEffect(() => {
+    setLoading(true);
+    setMessages([]);
+    setSelected(new Set());
+    void loadMessages(folder).catch(() => setLoading(false));
+  }, [folder, loadMessages]);
+
+  // Live: a new mail, a mail read or moved elsewhere, a folder created... the view follows.
+  useEffect(
+    () =>
+      listen((e) => {
+        if (e.type === "resync") {
+          void loadFolders().catch(() => {});
+          void loadMessages(folder, shown.current).catch(() => {});
+          return;
+        }
+        if (e.type !== "mail") return;
+        if (e.sent) {
+          const s = outgoing.current.get(e.sent.id);
+          outgoing.current.delete(e.sent.id);
+          if (e.sent.error) toast.error("Le mail n'est pas parti", { description: e.sent.error, duration: 15000, action: s ? { label: "Rouvrir", onClick: () => setCompose({ ...s, unsaved: true }) } : undefined });
+          else if (s) toast.success("Mail envoyé");
+          return;
+        }
+        void loadFolders().catch(() => {});
+        if (e.folders.includes(folder) || e.folders.includes("*")) void loadMessages(folder, shown.current).catch(() => {});
+        if (e.added?.length && folder === "INBOX") {
+          const keys = e.added.map(keyOf);
+          setFresh((s) => new Set([...s, ...keys]));
+          setTimeout(() => setFresh((s) => new Set([...s].filter((k) => !keys.includes(k)))), 2400);
+        }
+      }),
+    [listen, folder, loadFolders, loadMessages],
+  );
+
+  const more = useCallback(async () => {
+    const last = messages.at(-1);
+    if (!last || !hasMore) return;
+    const r = await api<Page>(`/api/mail/messages?folder=${encodeURIComponent(folder)}&before=${encodeURIComponent(`${last.date}|${last.uid}`)}${threaded ? "&threads=1" : ""}${tabQuery(folder)}`);
+    setMessages((m) => [...m, ...r.messages.filter((x) => !m.some((y) => y.uid === x.uid))]);
+    setHasMore(r.hasMore);
+  }, [messages, hasMore, folder, threaded, tabQuery]);
+
+  // Search: the local copy at once, then the mailbox itself (full text, old mails) to complete.
+  const searchKey = search && (search.q.trim() || search.unread || search.attachments || search.within) ? JSON.stringify(search) : "";
+  const searchRun = useRef(0);
+  const runSearch = useCallback(async (s: MailSearch, server: boolean) => {
+    const p = new URLSearchParams({ q: s.q.trim() });
+    if (s.in) p.set("folder", s.in);
+    if (s.unread) p.set("unread", "1");
+    if (s.attachments) p.set("attachments", "1");
+    if (s.within) p.set("since", new Date(Date.now() - Number(s.within) * 86_400_000).toISOString().slice(0, 10));
+    if (server) p.set("server", "1");
+    return (await api<{ messages: MailSummary[] }>(`/api/mail/search?${p}`)).messages;
+  }, []);
+  useEffect(() => {
+    if (!searchKey) {
+      setResults([]);
+      setSearching("");
+      return;
+    }
+    const s = JSON.parse(searchKey) as MailSearch;
+    const run = ++searchRun.current;
+    setSearching("local");
+    const t = setTimeout(async () => {
+      try {
+        const local = await runSearch(s, false);
+        if (run !== searchRun.current) return;
+        setResults(local);
+        setSearching("server");
+        const all = await runSearch(s, true);
+        if (run === searchRun.current) setResults(all);
+      } catch (e) {
+        if (run === searchRun.current) toast.error((e as Error).message);
+      } finally {
+        if (run === searchRun.current) setSearching("");
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [searchKey, runSearch]);
+  const openSearch = useCallback(() => setSearch((s) => s ?? { q: "", in: null, unread: false, attachments: false, within: "" }), []);
+  const closeSearch = useCallback(() => {
+    searchRun.current++;
+    setSearch(null);
+  }, []);
+
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      await api("/api/mail/sync", { method: "POST" });
+      await Promise.all([loadFolders(), loadMessages(folder, shown.current)]);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const isTrash = current?.specialUse === "\\Trash";
+  const isJunk = current?.specialUse === "\\Junk";
+
+  /**
+   * Does it at once in the list, then on the mailbox; on failure the list comes back as it was.
+   * A move can be undone for a few seconds ("Annuler").
+   */
+  const act = useCallback(
+    async (rows: number[], action: MailAction, exact = false) => {
+      // A conversation's row stands for all its mails of the folder (the flag stays on the one shown).
+      const uids = exact || !threaded || action.type === "flagged" ? rows : [...new Set(rows.flatMap((u) => messages.find((m) => m.uid === u)?.thread?.uids ?? [u]))];
+      if (!uids.length) return;
+      if (action.type === "delete" && !window.confirm(uids.length > 1 ? `Supprimer définitivement ces ${uids.length} mails ?` : "Supprimer définitivement ce mail ?")) return;
+      const from = folder;
+      const leaves = action.type !== "seen" && action.type !== "flagged";
+      const hit = (m: MailSummary) => m.folder === from && (uids.includes(m.uid) || (leaves && !!m.thread?.uids.some((u) => uids.includes(u))));
+      if (leaves) {
+        // The mail open goes away: the next one opens, like in Mail (in the results while searching).
+        if (openUid && uids.includes(openUid)) {
+          const list = search ? results : messages;
+          const i = list.findIndex((m) => m.folder === from && m.uid === openUid);
+          const next = list.slice(i + 1).find((m) => !hit(m)) ?? list.slice(0, Math.max(0, i)).reverse().find((m) => !hit(m));
+          go(next?.folder ?? from, next?.uid ?? null);
+        }
+        setMessages((list) => list.filter((m) => !hit(m)));
+        setResults((list) => list.filter((m) => !hit(m)));
+      } else {
+        const update = (list: MailSummary[]) =>
+          list.map((m) => {
+            const thread = m.thread && action.type === "seen" && m.thread.uids.some((u) => uids.includes(u)) ? { ...m.thread, unread: action.value ? 0 : m.thread.uids.length } : m.thread;
+            return hit(m) ? { ...m, [action.type]: action.value, thread } : thread !== m.thread ? { ...m, thread } : m;
+          });
+        setMessages(update);
+        setResults(update);
+      }
+      setSelected(new Set());
+      try {
+        const r = await api<{ moved?: { to: string; uids: number[] } }>("/api/mail/actions", { method: "POST", json: { folder: from, uids, action } });
+        if (!leaves) {
+          // Read / flag: Z puts them back as they were.
+          if (action.type === "seen" || action.type === "flagged") {
+            const before = uids.map((u) => [u, (search ? results : messages).find((m) => m.uid === u)?.[action.type]] as const).filter(([, v]) => v !== undefined && v !== action.value);
+            undoLast.current = before.length
+              ? async () => {
+                  undoLast.current = null;
+                  await act(
+                    before.map(([u]) => u),
+                    { type: action.type, value: !action.value },
+                    true,
+                  );
+                }
+              : null;
+          }
+          return;
+        }
+        const n = uids.length > 1 ? `${uids.length} mails` : "Mail";
+        const s = uids.length > 1 ? "s" : "";
+        const label =
+          action.type === "archive" ? `${n} archivé${s}` : action.type === "trash" ? `${n} dans la corbeille` : action.type === "spam" ? `${n} en spam` : action.type === "delete" ? `${n} supprimé${s} définitivement` : `${n} déplacé${s}`;
+        const moved = r.moved;
+        const undo = moved?.uids.length
+          ? async () => {
+              undoLast.current = null;
+              try {
+                await api("/api/mail/actions", { method: "POST", json: { folder: moved.to, uids: moved.uids, action: { type: "move", to: from } } });
+                await loadMessages(from, shown.current);
+                toast("Action annulée");
+              } catch (e) {
+                toast.error((e as Error).message);
+              }
+            }
+          : null;
+        undoLast.current = undo;
+        toast(label, { action: undo ? { label: "Annuler (Z)", onClick: () => void undo() } : undefined });
+      } catch (e) {
+        toast.error((e as Error).message);
+        void loadMessages(from, shown.current).catch(() => {});
+      }
+    },
+    [folder, openUid, messages, results, search, go, loadMessages, threaded],
+  );
+
+  const toggleSelect = useCallback(
+    (uid: number, range: boolean) => {
+      setSelected((sel) => {
+        const next = new Set(sel);
+        const last = [...sel].at(-1);
+        if (range && last !== undefined) {
+          const a = messages.findIndex((m) => m.uid === last), b = messages.findIndex((m) => m.uid === uid);
+          messages.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((m) => next.add(m.uid));
+        } else if (next.has(uid)) next.delete(uid);
+        else next.add(uid);
+        return next;
+      });
+    },
+    [messages],
+  );
+
+  // g then i / s / d / a / t / j: Réception, Envoyés, Brouillons, Archives, Corbeille, Spam.
+  // Caught first (capture), so the letter does not also reach the reader (a = reply to all).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!goPrefix.current) return;
+      const fresh = Date.now() - goPrefix.current < 1500;
+      if (e.key === "g" || e.key === "Shift") return;
+      goPrefix.current = 0;
+      const t = e.target as HTMLElement;
+      if (!fresh || compose || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
+      const use = ({ i: "\\Inbox", s: "\\Sent", d: "\\Drafts", a: "\\Archive", t: "\\Trash", j: "\\Junk" } as Record<string, string>)[e.key];
+      if (!use) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const target = use === "\\Inbox" ? "INBOX" : folders.find((f) => f.specialUse === use)?.path;
+      if (!target) return void toast(`Cette boîte n'a pas ce dossier`);
+      if (search) closeSearch();
+      go(target, null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [folders, compose, search, closeSearch, go]);
+
+  // j / k: next / previous mail. Escape: back to the list.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]") || (!help && document.querySelector("[role=dialog][aria-modal]"))) return;
+      const list = search ? results : messages;
+      const i = list.findIndex((m) => m.folder === folder && m.uid === openUid);
+      if (e.key === "?" && !compose && !moving) {
+        e.preventDefault();
+        setHelp((h) => !h);
+        return;
+      }
+      if (help) return;
+      if (e.key === "g" && !compose && !moving) {
+        goPrefix.current = Date.now();
+        return;
+      }
+      if (e.key === "z" && !compose && !moving && undoLast.current) {
+        e.preventDefault();
+        void undoLast.current();
+        return;
+      }
+      if ((e.key === "I" || e.key === "U") && !compose && !moving && (selected.size || openUid)) {
+        e.preventDefault();
+        void act(selected.size ? [...selected] : [openUid!], { type: "seen", value: e.key === "I" });
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "o") && !openUid && !compose && !moving && !selected.size && list[0]) {
+        e.preventDefault();
+        go(list[0].folder, list[0].uid);
+        return;
+      }
+      if (e.key === "/" && !compose && !moving) {
+        e.preventDefault();
+        if (search) document.getElementById("mail-search")?.focus();
+        else openSearch();
+        return;
+      }
+      if (e.key === "c" && !compose) {
+        e.preventDefault();
+        setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" });
+        return;
+      }
+      if (compose || moving) return;
+      if (selected.size) {
+        const uids = [...selected];
+        const keyAction: Record<string, MailAction> = { e: { type: "archive" }, "#": isTrash || isJunk ? { type: "delete" } : { type: "trash" }, Delete: isTrash || isJunk ? { type: "delete" } : { type: "trash" }, "!": { type: "spam" } };
+        if (keyAction[e.key]) {
+          e.preventDefault();
+          void act(uids, keyAction[e.key]);
+          return;
+        }
+        if (e.key === "v") {
+          e.preventDefault();
+          setMoving(uids);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSelected(new Set());
+          return;
+        }
+      }
+      if (e.key === "x" && openUid) {
+        e.preventDefault();
+        toggleSelect(openUid, false);
+        return;
+      }
+      if (e.key === "j" || e.key === "ArrowDown") {
+        const next = list[i + 1] ?? (i === -1 ? list[0] : null);
+        if (next) {
+          e.preventDefault();
+          go(next.folder, next.uid);
+        }
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        const prev = list[i - 1];
+        if (prev) {
+          e.preventDefault();
+          go(prev.folder, prev.uid);
+        }
+      } else if (e.key === "Escape" && openUid) go(folder, null);
+      else if (e.key === "Escape" && search) closeSearch();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [messages, results, search, openUid, folder, go, compose, moving, selected, act, isTrash, isJunk, toggleSelect, openSearch, closeSearch, help]);
+
+  const sent = useCallback((id: string, undoMs: number, state: SendState) => {
+    outgoing.current.set(id, state);
+    setCompose(null);
+    toast("Envoi du mail…", {
+      id,
+      duration: undoMs,
+      action: {
+        label: "Annuler",
+        onClick: async () => {
+          try {
+            await api(`/api/mail/send?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+            outgoing.current.delete(id);
+            setCompose({ ...state, unsaved: true });
+            toast("Envoi annulé", { description: "Le mail est de nouveau ouvert." });
+          } catch (e) {
+            toast.error((e as Error).message);
+          }
+        },
+      },
+    });
+  }, []);
+
+  // What waits on the server: scheduled sends, snoozed mails, follow-ups.
+  const [later, setLater] = useState<MailLaterInfo[]>([]);
+  const [laterOpen, setLaterOpen] = useState(false);
+  const loadLater = useCallback(() => void api<{ items: MailLaterInfo[] }>("/api/mail/later").then((r) => setLater(r.items), () => {}), []);
+  useEffect(() => {
+    loadLater();
+    return listen((e) => void (e.type === "mail" && loadLater()));
+  }, [listen, loadLater]);
+
+  const scheduled = useCallback(
+    (id: string, due: string, state: SendState) => {
+      setCompose(null);
+      loadLater();
+      toast.success(`Envoi programmé ${whenText(due)}`, {
+        action: {
+          label: "Annuler",
+          onClick: async () => {
+            try {
+              await api(`/api/mail/later?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+              loadLater();
+              setCompose({ ...state, unsaved: true });
+              toast("Envoi annulé", { description: "Le mail est de nouveau ouvert." });
+            } catch (e) {
+              toast.error((e as Error).message);
+            }
+          },
+        },
+      });
+    },
+    [loadLater],
+  );
+
+  const markSeen = useCallback(
+    (uid: number, all?: number[]) => {
+      const uids = all ?? [uid];
+      const seen = (list: MailSummary[]) =>
+        list.map((x) => (x.folder === folder && (uids.includes(x.uid) || x.thread?.uids.some((u) => uids.includes(u))) ? { ...x, seen: true, thread: x.thread && (all ? { ...x.thread, unread: 0 } : { ...x.thread, unread: Math.max(0, x.thread.unread - (x.seen ? 0 : 1)) }) } : x));
+      setMessages(seen);
+      setResults(seen);
+    },
+    [folder],
+  );
+
+  if (!account) return <Centered><Loader2 className="size-5 animate-spin text-ink-3" /></Centered>;
+  if (!account.enabled || !account.account) return <NoMailbox enabled={account.enabled} />;
+
+  const info = account.account;
+  const mine = info.identities?.length ? info.identities.map((i) => i.address) : [info.email];
+  return (
+    <div className="flex min-h-0 flex-1">
+      {/* Folders */}
+      {!layout.foldersHidden && (
+        <>
+          <nav style={{ width: layout.folders }} className="scroll-thin flex shrink-0 flex-col gap-px overflow-y-auto px-2 py-3 max-lg:hidden">
+            <div className="mb-2 flex items-start gap-1 px-2">
+              <div className="min-w-0 flex-1">
+                <h1 className="font-display text-[26px] leading-none">Mails</h1>
+                <p className="mt-1.5 truncate text-[12px] text-ink-3" title={info.email}>{info.email}</p>
+              </div>
+              <button onClick={() => setLayout({ ...layout, foldersHidden: true })} aria-label="Replier les dossiers" title="Replier les dossiers" className="press -mr-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+                <PanelLeftClose className="size-4" />
+              </button>
+            </div>
+            <FolderNav folders={folders} current={folder} onOpen={(path) => go(path, null)} onChanged={(next, path) => (setFolders(next), path !== undefined && go(path ?? "INBOX", null))} />
+            {later.some((l) => l.kind !== "snooze") && (
+              <button onClick={() => setLaterOpen(true)} className="press mt-2 flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-ink-2 hover:bg-ink/[0.04]">
+                <Clock className="size-4 text-ink-3" />
+                <span className="flex-1">Programmés</span>
+                <span className="tabular text-[12px] text-ink-3">{later.filter((l) => l.kind !== "snooze").length}</span>
+              </button>
+            )}
+          </nav>
+          <ResizeHandle label="Largeur des dossiers" className="max-lg:hidden" width={layout.folders} min={160} max={340} onChange={(w) => setLayout({ ...layout, folders: w })} onReset={() => setLayout({ ...layout, folders: LAYOUT.folders })} />
+        </>
+      )}
+
+      {/* List */}
+      <section style={{ "--list-w": `${layout.list}px` } as React.CSSProperties} className={cn("flex min-h-0 shrink-0 flex-col max-md:w-full md:w-[var(--list-w)]", layout.foldersHidden ? "" : "max-lg:border-l-0", openUid && "max-md:hidden")}>
+        {search ? (
+          <SearchBar
+            search={search}
+            folderName={folders.find((f) => f.path === (search.in ?? folder))?.name ?? search.in ?? folder}
+            busy={searching}
+            onChange={(next) => setSearch((s) => (s ? { ...s, ...next } : s))}
+            onScope={(all) => setSearch((s) => (s ? { ...s, in: all ? null : folder } : s))}
+            onClose={closeSearch}
+          />
+        ) : selected.size > 0 ? (
+          <SelectionBar
+            count={selected.size}
+            all={selected.size === messages.length}
+            onAll={() => setSelected(selected.size === messages.length ? new Set() : new Set(messages.map((m) => m.uid)))}
+            onClear={() => setSelected(new Set())}
+            trash={isTrash || isJunk}
+            junk={isJunk}
+            onAction={(a) => void act([...selected], a)}
+            onMove={() => setMoving([...selected])}
+            allSeen={messages.filter((m) => selected.has(m.uid)).every((m) => m.seen)}
+            allFlagged={messages.filter((m) => selected.has(m.uid)).every((m) => m.flagged)}
+          />
+        ) : (
+        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3">
+          <select value={folder} onChange={(e) => go(e.target.value, null)} aria-label="Dossier" className="h-8 min-w-0 rounded-lg border border-line-strong bg-surface px-2 text-[13px] lg:hidden">
+            {folders.map((f) => (
+              <option key={f.path} value={f.path}>
+                {f.name}
+                {f.unread ? ` (${f.unread})` : ""}
+              </option>
+            ))}
+          </select>
+          {layout.foldersHidden && (
+            <button onClick={() => setLayout({ ...layout, foldersHidden: false })} aria-label="Afficher les dossiers" title="Afficher les dossiers" className="press -ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink max-lg:hidden">
+              <PanelLeftOpen className="size-4" />
+            </button>
+          )}
+          <span className="truncate text-[14px] font-medium max-lg:hidden">{current?.name ?? folder}</span>
+          {current && current.unread > 0 && <span className="tabular shrink-0 text-[12px] whitespace-nowrap text-ink-3 max-xl:hidden">{current.unread} non lus</span>}
+          <span className="ml-auto flex items-center gap-1" title={info.live ? "Temps réel actif : les nouveaux mails arrivent en direct" : "Temps réel en cours de connexion"}>
+            <Zap className={cn("size-3.5", info.live ? "text-accent" : "text-ink-3")} />
+            <span className="text-[11.5px] whitespace-nowrap text-ink-3 max-xl:hidden">{info.live ? "En direct" : "Connexion…"}</span>
+          </span>
+          <button
+            onClick={toggleThreads}
+            aria-label={threaded ? "Afficher mail par mail" : "Regrouper par conversation"}
+            title={threaded ? "Par conversation · passer à mail par mail" : "Mail par mail · regrouper par conversation"}
+            className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink"
+          >
+            {threaded ? <MessagesSquare className="size-4" /> : <List className="size-4" />}
+          </button>
+          <button onClick={openSearch} aria-label="Rechercher" title="Rechercher (/)" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <Search className="size-4" />
+          </button>
+          <button onClick={() => setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" })} aria-label="Nouveau mail" title="Nouveau mail (C)" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <SquarePen className="size-4" />
+          </button>
+          <button onClick={sync} disabled={syncing} aria-label="Synchroniser" title="Synchroniser" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
+          </button>
+        </header>
+        )}
+        {!search && folder === "INBOX" && <InboxTabs tab={tab} counts={categories} onChange={setTab} />}
+        {(info.status === "error" || info.status === "auth") && (
+          <div className="flex items-center gap-2 border-b border-line bg-danger/5 px-3 py-2 text-[12.5px]">
+            <ShieldAlert className="size-4 shrink-0 text-danger" />
+            <span className="min-w-0 flex-1">{info.lastError ?? "La boîte ne répond pas."}</span>
+            <Link href="/settings" className="shrink-0 font-medium text-accent">Réglages</Link>
+          </div>
+        )}
+        {search ? (
+          <MessageList
+            key="search"
+            messages={results}
+            loading={!!searching}
+            empty={searchKey ? "Aucun mail trouvé." : "Tape des mots, un nom (de:léa, à:paul) ou choisis un filtre."}
+            emptyIcon={Search}
+            hasMore={false}
+            onMore={() => {}}
+            open={openUid ? { folder, uid: openUid } : null}
+            fresh={fresh}
+            folders={search.in ? undefined : folders}
+            onOpen={(m) => go(m.folder, m.uid)}
+          />
+        ) : (
+          <MessageList
+            messages={messages}
+            loading={loading || info.status === "pending" || info.status === "syncing"}
+            hasMore={hasMore}
+            onMore={more}
+            open={openUid ? { folder, uid: openUid } : null}
+            fresh={fresh}
+            empty={folder === "INBOX" && tab !== "all" ? `Rien dans ${CATEGORY_NAME[tab]}.` : undefined}
+            selected={selected}
+            onSelect={toggleSelect}
+            onOpen={(m) => go(folder, m.uid)}
+          />
+        )}
+      </section>
+
+      <ResizeHandle label="Largeur de la liste" width={layout.list} min={280} max={680} onChange={(w) => setLayout({ ...layout, list: w })} onReset={() => setLayout({ ...layout, list: LAYOUT.list })} />
+
+      {/* Reading */}
+      <section className={cn("flex min-w-0 flex-1 flex-col", !openUid && "max-md:hidden")}>
+        {openUid ? <Reader
+            key={`${folder}|${openUid}`}
+            folder={folder}
+            uid={openUid}
+            me={mine}
+            isDrafts={current?.specialUse === "\\Drafts"}
+            trash={isTrash || isJunk}
+            junk={isJunk}
+            busy={!!compose || !!moving || selected.size > 0 || help}
+            onCompose={setCompose}
+            threaded={threaded && !search}
+            onAction={(a, uids) => void act(uids ?? [openUid], a, !!uids)}
+            onMove={(uids) => setMoving(uids ?? [openUid])}
+            onBack={() => go(folder, null)}
+            onSeen={markSeen}
+            later={later}
+            onLater={loadLater}
+            sent={current?.specialUse === "\\Sent"}
+            ai={!!info.ai}
+          /> : <EmptyReader count={current?.unread ?? 0} />}
+      </section>
+      {moving && (
+        <MoveMenu
+          folders={folders.filter((f) => f.path !== folder)}
+          onClose={() => setMoving(null)}
+          onPick={(to) => {
+            const uids = moving;
+            setMoving(null);
+            void act(uids, { type: "move", to });
+          }}
+        />
+      )}
+      {help && <ShortcutsHelp onClose={() => setHelp(false)} />}
+      {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} identities={info.identities ?? []} onClose={() => setCompose(null)} onSent={sent} onScheduled={scheduled} />}
+      {laterOpen && <LaterPanel items={later} onClose={() => setLaterOpen(false)} onChanged={loadLater} />}
+    </div>
+  );
+}
+
+function SelectionBar({
+  count,
+  all,
+  onAll,
+  onClear,
+  trash,
+  junk,
+  onAction,
+  onMove,
+  allSeen,
+  allFlagged,
+}: {
+  count: number;
+  all: boolean;
+  onAll: () => void;
+  onClear: () => void;
+  trash: boolean;
+  junk: boolean;
+  onAction: (a: MailAction) => void;
+  onMove: () => void;
+  allSeen: boolean;
+  allFlagged: boolean;
+}) {
+  return (
+    <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line bg-[color-mix(in_oklab,var(--accent)_7%,transparent)] px-2">
+      <button onClick={onAll} aria-label={all ? "Tout désélectionner" : "Tout sélectionner"} className="press flex size-8 items-center justify-center rounded-lg">
+        <span className={cn("flex size-4 items-center justify-center rounded border", all ? "border-accent bg-accent text-accent-ink" : "border-line-strong bg-surface")}>{all && <Check className="size-3" strokeWidth={3} />}</span>
+      </button>
+      <span className="tabular min-w-0 flex-1 truncate text-[13px] font-medium whitespace-nowrap">
+        {count} sélectionné{count > 1 ? "s" : ""}
+      </span>
+      <Action small label="Archiver (E)" Icon={Archive} onClick={() => onAction({ type: "archive" })} />
+      <Action small label={trash ? "Supprimer définitivement (#)" : "Corbeille (#)"} Icon={Trash2} onClick={() => onAction(trash ? { type: "delete" } : { type: "trash" })} />
+      {junk ? <Action small label="Pas un spam" Icon={ShieldCheck} onClick={() => onAction({ type: "move", to: "INBOX" })} /> : <Action small label="Spam (!)" Icon={ShieldAlert} onClick={() => onAction({ type: "spam" })} />}
+      <Action small label="Déplacer (V)" Icon={FolderInput} onClick={onMove} />
+      <Action small label={allSeen ? "Marquer comme non lus" : "Marquer comme lus"} Icon={allSeen ? Mail : MailOpen} onClick={() => onAction({ type: "seen", value: !allSeen })} />
+      <Action small label={allFlagged ? "Retirer le drapeau" : "Signaler"} Icon={Flag} active={allFlagged} onClick={() => onAction({ type: "flagged", value: !allFlagged })} />
+      <Action small label="Annuler la sélection (Échap)" Icon={X} onClick={onClear} />
+    </header>
+  );
+}
+
+/** "Déplacer vers…": the folders, filtered as one types. */
+function MoveMenu({ folders, onPick, onClose }: { folders: MailFolder[]; onPick: (path: string) => void; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  const list = folders.filter((f) => f.name.toLowerCase().includes(q.trim().toLowerCase()) || f.path.toLowerCase().includes(q.trim().toLowerCase()));
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/20 pt-[15vh]" onMouseDown={onClose}>
+      <div role="dialog" aria-label="Déplacer vers" className="w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-xl border border-line-strong bg-surface shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => (setQ(e.target.value), setActive(0))}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              onClose();
+            } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((a) => (a + (e.key === "ArrowDown" ? 1 : list.length - 1)) % Math.max(1, list.length));
+            } else if (e.key === "Enter" && list[active]) {
+              e.preventDefault();
+              onPick(list[active].path);
+            }
+          }}
+          placeholder="Déplacer vers…"
+          className="h-11 w-full border-b border-line bg-transparent px-4 text-[14px] outline-none"
+        />
+        <ul className="scroll-thin max-h-[320px] overflow-y-auto py-1">
+          {list.map((f, i) => {
+            const Icon = (f.specialUse && FOLDER_ICONS[f.specialUse]) || Folder;
+            return (
+              <li key={f.path}>
+                <button onClick={() => onPick(f.path)} onMouseEnter={() => setActive(i)} className={cn("flex w-full items-center gap-2.5 px-4 py-2 text-left text-[13.5px]", i === active && "bg-accent-soft")}>
+                  <Icon className="size-4 shrink-0 text-ink-3" />
+                  <span className="min-w-0 flex-1 truncate">{f.path.split(f.delimiter || "/").join(" › ").replace(/^INBOX$/, f.name)}</span>
+                </button>
+              </li>
+            );
+          })}
+          {!list.length && <li className="px-4 py-3 text-[13px] text-ink-3">Aucun dossier</li>}
+        </ul>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** The folders, with creating, renaming and deleting the person's own ones (on the server). */
+function FolderNav({ folders, current, onOpen, onChanged }: { folders: MailFolder[]; current: string; onOpen: (path: string) => void; onChanged: (folders: MailFolder[], go?: string | null) => void }) {
+  const [editing, setEditing] = useState<{ path: string | null; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const call = async (method: "POST" | "PATCH" | "DELETE", json: Record<string, string>) => {
+    setBusy(true);
+    try {
+      return await api<{ path: string | null; folders: MailFolder[] }>("/api/mail/folders", { method, json });
+    } catch (e) {
+      toast.error((e as Error).message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!editing) return;
+    const name = editing.name.trim();
+    const was = editing.path;
+    setEditing(null);
+    if (!name) return;
+    const r = await call(was ? "PATCH" : "POST", was ? { path: was, name } : { name });
+    if (r) onChanged(r.folders, was === current || !was ? r.path : undefined);
+  };
+
+  const remove = async (f: MailFolder) => {
+    if (!window.confirm(`Supprimer le dossier « ${f.name} » et les ${f.total} mails qu'il contient ? Il disparaît aussi du webmail et de l'iPhone.`)) return;
+    const r = await call("DELETE", { path: f.path });
+    if (r) onChanged(r.folders, f.path === current ? null : undefined);
+  };
+
+  const input = (
+    <input
+      autoFocus
+      value={editing?.name ?? ""}
+      disabled={busy}
+      onChange={(e) => setEditing((x) => (x ? { ...x, name: e.target.value } : x))}
+      onBlur={() => void submit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setEditing(null);
+        }
+      }}
+      aria-label="Nom du dossier"
+      className="h-8 w-full rounded-lg border border-accent bg-surface px-2 text-[13.5px] outline-none"
+    />
+  );
+
+  return (
+    <>
+      {folders.map((f) =>
+        editing?.path === f.path ? (
+          <div key={f.path}>{input}</div>
+        ) : (
+          <div key={f.path} className="group relative">
+            <FolderLink f={f} active={f.path === current} onClick={() => onOpen(f.path)} />
+            {!f.specialUse && (
+              <span className="absolute top-1 right-1 hidden items-center gap-0.5 rounded-md bg-surface-2 group-hover:flex">
+                <button onClick={() => setEditing({ path: f.path, name: f.name })} aria-label={`Renommer ${f.name}`} title="Renommer" className="press flex size-6 items-center justify-center rounded text-ink-3 hover:text-ink">
+                  <Pencil className="size-3.5" />
+                </button>
+                <button onClick={() => void remove(f)} aria-label={`Supprimer ${f.name}`} title="Supprimer" className="press flex size-6 items-center justify-center rounded text-ink-3 hover:text-danger">
+                  <Trash2 className="size-3.5" />
+                </button>
+              </span>
+            )}
+          </div>
+        ),
+      )}
+      {editing && editing.path === null ? (
+        <div className="mt-1">{input}</div>
+      ) : (
+        <button onClick={() => setEditing({ path: null, name: "" })} disabled={busy} className="press mt-1 flex h-8 items-center gap-2.5 rounded-lg px-2 text-[13px] text-ink-3 hover:bg-ink/[0.04] hover:text-ink">
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <FolderPlus className="size-4" />}
+          Nouveau dossier
+        </button>
+      )}
+    </>
+  );
+}
+
+function FolderLink({ f, active, onClick }: { f: MailFolder; active: boolean; onClick: () => void }) {
+  const Icon = (f.specialUse && FOLDER_ICONS[f.specialUse]) || Folder;
+  const depth = f.delimiter ? f.path.split(f.delimiter).length - 1 : 0;
+  return (
+    <button
+      onClick={onClick}
+      style={{ paddingLeft: 8 + depth * 14 }}
+      className={cn("flex h-8 shrink-0 items-center gap-2.5 rounded-lg pr-2 text-left text-[13.5px] transition-colors duration-150", active ? "bg-surface font-medium text-ink shadow-card" : f.unread ? "font-semibold text-ink hover:bg-ink/[0.04]" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}
+    >
+      <Icon className={cn("size-4 shrink-0", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />
+      <span className="min-w-0 flex-1 truncate">{f.name}</span>
+      {f.unread > 0 && f.specialUse !== "\\Sent" && f.specialUse !== "\\Trash" && <span className="tabular text-[11.5px] font-semibold text-ink-2">{f.unread > 999 ? "999+" : f.unread}</span>}
+    </button>
+  );
+}
+
+const PERIODS: { value: MailSearch["within"]; label: string }[] = [
+  { value: "", label: "Toutes dates" },
+  { value: "30", label: "30 derniers jours" },
+  { value: "365", label: "12 derniers mois" },
+];
+
+/** The search field and its filters, in place of the list's header. */
+function SearchBar({
+  search,
+  folderName,
+  busy,
+  onChange,
+  onScope,
+  onClose,
+}: {
+  search: MailSearch;
+  folderName: string;
+  busy: "" | "local" | "server";
+  onChange: (next: Partial<MailSearch>) => void;
+  onScope: (all: boolean) => void;
+  onClose: () => void;
+}) {
+  const chip = (on: boolean) =>
+    cn("press h-7 shrink-0 rounded-full border px-2.5 text-[12px] whitespace-nowrap", on ? "border-accent bg-accent-soft font-medium text-accent" : "border-line-strong text-ink-2 hover:bg-ink/[0.04]");
+  return (
+    <div className="shrink-0 border-b border-line">
+      <div className="flex h-[52px] items-center gap-2 px-3">
+        <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line-strong bg-surface px-2.5 focus-within:border-accent">
+          {busy ? <Loader2 className="size-4 shrink-0 animate-spin text-ink-3" /> : <Search className="size-4 shrink-0 text-ink-3" />}
+          <input
+            id="mail-search"
+            autoFocus
+            value={search.q}
+            onChange={(e) => onChange({ q: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                if (search.q) onChange({ q: "" });
+                else onClose();
+              }
+            }}
+            placeholder="Rechercher dans les mails"
+            aria-label="Rechercher dans les mails"
+            className="min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-ink-3"
+          />
+        </div>
+        <button onClick={onClose} className="press shrink-0 rounded-lg px-2 py-1.5 text-[13px] text-ink-2 hover:bg-ink/[0.05]">
+          Fermer
+        </button>
+      </div>
+      <div className="scroll-thin flex items-center gap-1.5 overflow-x-auto px-3 pb-2.5">
+        <button onClick={() => onScope(true)} className={chip(!search.in)}>Tous les dossiers</button>
+        <button onClick={() => onScope(false)} className={cn(chip(!!search.in), "max-w-[10rem] truncate")} title={folderName}>{folderName}</button>
+        <span className="mx-0.5 h-4 w-px shrink-0 bg-line" />
+        <button onClick={() => onChange({ unread: !search.unread })} className={chip(search.unread)} aria-pressed={search.unread}>Non lus</button>
+        <button onClick={() => onChange({ attachments: !search.attachments })} className={chip(search.attachments)} aria-pressed={search.attachments}>
+          <Paperclip className="mr-1 inline size-3" />
+          Pièces jointes
+        </button>
+        <select
+          value={search.within}
+          onChange={(e) => onChange({ within: e.target.value as MailSearch["within"] })}
+          aria-label="Période"
+          className={cn(chip(!!search.within), "appearance-none bg-transparent pr-2.5")}
+        >
+          {PERIODS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+      </div>
+      {busy === "server" && <p className="px-3 pb-2 text-[11.5px] text-ink-3">Recherche aussi dans toute la boîte sur le serveur…</p>}
+    </div>
+  );
+}
+
+const NO_SELECTION = new Set<number>();
+
+function MessageList({
+  messages,
+  loading,
+  empty = "Aucun mail dans ce dossier.",
+  emptyIcon: EmptyIcon = Inbox,
+  hasMore,
+  onMore,
+  open,
+  fresh,
+  selected = NO_SELECTION,
+  onSelect,
+  folders,
+  onOpen,
+}: {
+  messages: MailSummary[];
+  loading: boolean;
+  empty?: string;
+  emptyIcon?: typeof Inbox;
+  hasMore: boolean;
+  onMore: () => void;
+  open: { folder: string; uid: number } | null;
+  fresh: Set<string>;
+  /** Without onSelect (search results), mails cannot be ticked. */
+  selected?: Set<number>;
+  onSelect?: (uid: number, range: boolean) => void;
+  /** Given, each row says which folder the mail is in (a search across folders). */
+  folders?: MailFolder[];
+  onOpen: (m: MailSummary) => void;
+}) {
+  const end = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+
+  // Infinite scroll: the next page when the end of the list comes into view.
+  useEffect(() => {
+    const el = end.current;
+    if (!el || !hasMore) return;
+    const io = new IntersectionObserver((entries) => entries[0]?.isIntersecting && onMore(), { rootMargin: "400px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, onMore]);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [open?.folder, open?.uid]);
+
+  if (!messages.length)
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-[13px] text-ink-3">
+        {loading ? (
+          <>
+            <Loader2 className="size-5 animate-spin" />
+            {onSelect ? "Synchronisation de ta boîte…" : "Recherche…"}
+          </>
+        ) : (
+          <>
+            <EmptyIcon className="size-6" strokeWidth={1.5} />
+            {empty}
+          </>
+        )}
+      </div>
+    );
+
+  return (
+    <div className="scroll-thin flex-1 overflow-y-auto">
+      <ul>
+        {messages.map((m) => {
+          const active = !!open && m.folder === open.folder && m.uid === open.uid;
+          const checked = selected.has(m.uid);
+          const place = folders?.find((f) => f.path === m.folder);
+          // A conversation is unread while one of its mails of the folder is.
+          const unread = m.thread ? m.thread.unread > 0 : !m.seen;
+          return (
+            <li
+              key={keyOf(m)}
+              className={cn(
+                "group relative border-b border-line transition-colors duration-300",
+                checked ? "bg-[color-mix(in_oklab,var(--accent)_16%,transparent)]" : active ? "bg-accent-soft" : "hover:bg-ink/[0.03]",
+                fresh.has(keyOf(m)) && !active && !checked && "bg-[color-mix(in_oklab,var(--accent)_10%,transparent)]",
+              )}
+            >
+              {/* Select: the box shows on hover, or for all once one is ticked. ⌘/Ctrl-click and Shift-click work too. */}
+              {onSelect && <button
+                onClick={(e) => onSelect(m.uid, e.shiftKey)}
+                aria-label={checked ? "Désélectionner" : "Sélectionner"}
+                aria-pressed={checked}
+                className={cn(
+                  "absolute top-2.5 left-1 z-[1] flex size-6 items-center justify-center rounded-md max-md:hidden",
+                  selected.size ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                )}
+              >
+                <span className={cn("flex size-4 items-center justify-center rounded border", checked ? "border-accent bg-accent text-accent-ink" : "border-line-strong bg-surface")}>{checked && <Check className="size-3" strokeWidth={3} />}</span>
+              </button>}
+              <button
+                ref={active ? activeRef : undefined}
+                onClick={(e) => (onSelect && (e.metaKey || e.ctrlKey || e.shiftKey || selected.size) ? onSelect(m.uid, e.shiftKey) : onOpen(m))}
+                className="relative flex w-full flex-col gap-0.5 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset md:pl-8"
+              >
+                {unread && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
+                <span className="flex items-baseline gap-2">
+                  <span className={cn("min-w-0 flex-1 truncate text-[13.5px]", unread ? "font-semibold text-ink" : "text-ink-2")}>{m.thread && m.thread.count > 1 ? m.thread.participants.join(", ") : who(m.from)}</span>
+                  {m.thread && m.thread.count > 1 && <span className="tabular shrink-0 rounded-full bg-ink/[0.07] px-1.5 text-[11px] leading-[17px] font-medium text-ink-2" aria-label={`${m.thread.count} mails`}>{m.thread.count}</span>}
+                  {m.flagged && <Flag className="size-3 shrink-0 self-center fill-danger text-danger" />}
+                  {m.attachments && <Paperclip className="size-3 shrink-0 self-center text-ink-3" />}
+                  <span className={cn("tabular shrink-0 text-[11.5px]", unread ? "font-medium text-accent" : "text-ink-3")}>{shortDate(m.date)}</span>
+                </span>
+                <span className={cn("truncate text-[13px]", unread ? "font-medium text-ink" : "text-ink-2")}>{m.subject || "(sans objet)"}</span>
+                <span className="line-clamp-2 text-[12.5px] leading-snug text-ink-3">{m.preview || " "}</span>
+                {folders && (
+                  <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3">
+                    <Folder className="size-3" />
+                    {place?.name ?? m.folder}
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div ref={end} className="flex h-12 items-center justify-center">
+        {hasMore && <Loader2 className="size-4 animate-spin text-ink-3" />}
+      </div>
+    </div>
+  );
+}
+
+// Links in the text become clickable, nothing else is interpreted.
+const URL_RE = /(https?:\/\/[^\s<>()"']+[^\s<>()"'.,;:!?])/g;
+
+function Linkified({ text }: { text: string }) {
+  const parts = useMemo(() => text.split(URL_RE), [text]);
+  return (
+    <>
+      {parts.map((p, i) =>
+        i % 2 ? (
+          <a key={i} href={p} target="_blank" rel="noreferrer noopener" title={p} className="break-all text-accent underline decoration-accent/30 underline-offset-2 hover:decoration-accent">
+            {p.length > 80 ? `${p.slice(0, 77)}…` : p}
+          </a>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  );
+}
+
+const PREVIEW_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
+
+const attachmentUrl = (mail: { folder: string; uid: number }, a: MailAttachment, inline = false) =>
+  `/api/mail/attachment?folder=${encodeURIComponent(mail.folder)}&uid=${mail.uid}&part=${encodeURIComponent(a.part)}${inline ? "&inline=1" : ""}`;
+
+function Reader({
+  folder,
+  uid,
+  me,
+  isDrafts,
+  trash,
+  junk,
+  busy,
+  threaded,
+  onCompose,
+  onAction,
+  onMove,
+  onBack,
+  onSeen,
+  later,
+  onLater,
+  sent,
+  ai,
+}: {
+  /** The AI help is on (the server has an Anthropic key). */
+  ai: boolean;
+  later: MailLaterInfo[];
+  onLater: () => void;
+  /** In the Sent folder: "Relance-moi" instead of "Reporter". */
+  sent: boolean;
+  folder: string;
+  uid: number;
+  /** My addresses, the mailbox's own first. */
+  me: string[];
+  isDrafts: boolean;
+  /** In the Trash or the Spam: deleting is for good. */
+  trash: boolean;
+  junk: boolean;
+  /** Writing, moving or selecting: the reader's keys are off. */
+  busy: boolean;
+  /** "Par conversation": the whole exchange is shown, and the actions apply to it. */
+  threaded: boolean;
+  onCompose: (init: ComposeInit) => void;
+  /** uids: the mails of the conversation in this folder, when the action is for all of them. */
+  onAction: (action: MailAction, uids?: number[]) => void;
+  onMove: (uids?: number[]) => void;
+  onBack: () => void;
+  onSeen: (uid: number, all?: number[]) => void;
+}) {
+  const [mail, setMail] = useState<MailContent | null>(null);
+  const [error, setError] = useState("");
+  const [members, setMembers] = useState<MailSummary[]>([]);
+  const [gateway, setGateway] = useState<"share" | "ticket" | null>(null);
+  const [ticketInit, setTicketInit] = useState<{ title: string; note: string } | undefined>();
+  // Asked for each mail: Claude reads a mail only when I press the button.
+  const [aiOpen, setAiOpen] = useState(false);
+  useEffect(() => setAiOpen(false), [folder, uid]);
+
+  useEffect(() => {
+    let live = true;
+    api<{ mail: MailContent }>(`/api/mail/message?folder=${encodeURIComponent(folder)}&uid=${uid}`).then(
+      (r) => {
+        if (!live) return;
+        setMail(r.mail);
+        onSeen(uid);
+      },
+      (e: Error) => live && setError(e.message),
+    );
+    return () => {
+      live = false;
+    };
+  }, [folder, uid, onSeen]);
+
+  // The conversation around this mail; its other unread mails are read too once it is open.
+  useEffect(() => {
+    if (!threaded) return setMembers([]);
+    let live = true;
+    api<{ messages: MailSummary[] }>(`/api/mail/thread?folder=${encodeURIComponent(folder)}&uid=${uid}`).then(
+      (r) => {
+        if (!live) return;
+        setMembers(r.messages);
+        const unread = r.messages.filter((m) => !m.seen && !(m.folder === folder && m.uid === uid));
+        for (const f of new Set(unread.map((m) => m.folder))) {
+          void api("/api/mail/actions", { method: "POST", json: { folder: f, uids: unread.filter((m) => m.folder === f).map((m) => m.uid), action: { type: "seen", value: true } } }).catch(() => {});
+        }
+        if (unread.length) onSeen(uid, r.messages.filter((m) => m.folder === folder).map((m) => m.uid));
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [threaded, folder, uid, onSeen]);
+
+  const conversation = threaded && members.length > 1;
+  const folderUids = useMemo(() => {
+    const own = members.filter((m) => m.folder === folder).map((m) => m.uid);
+    return own.includes(uid) ? own : [uid];
+  }, [members, folder, uid]);
+
+  const run = useCallback(
+    (a: MailAction) => {
+      if (a.type === "flagged") setMail((m) => (m ? { ...m, flagged: a.value } : m));
+      onAction(a, conversation && a.type !== "flagged" ? folderUids : undefined);
+      // Unread again: back to the list, or opening it would mark it read at once.
+      if (a.type === "seen" && !a.value) onBack();
+    },
+    [onAction, onBack, conversation, folderUids],
+  );
+  const move = useCallback(() => onMove(conversation ? folderUids : undefined), [onMove, conversation, folderUids]);
+
+  // r / a / f: reply, reply to all, forward. e: archive, #: trash, u: unread, s: flag, v: move, !: spam.
+  useEffect(() => {
+    if (!mail || busy || gateway) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]") || document.querySelector("[role=dialog][aria-modal]")) return;
+      const mode = ({ r: "reply", a: "replyAll", f: "forward" } as Record<string, ComposeMode>)[e.key];
+      const action = ({ e: { type: "archive" }, "#": trash ? { type: "delete" } : { type: "trash" }, Delete: trash ? { type: "delete" } : { type: "trash" }, u: { type: "seen", value: false }, s: { type: "flagged", value: !mail.flagged }, "!": junk ? { type: "move", to: "INBOX" } : { type: "spam" } } as Record<string, MailAction>)[e.key];
+      if (mode && !isDrafts) {
+        e.preventDefault();
+        onCompose(composeFrom(mail, mode, me));
+      } else if (action) {
+        e.preventDefault();
+        run(action);
+      } else if (e.key === "v") {
+        e.preventDefault();
+        move();
+      } else if (e.key === "l" || e.key === "t") {
+        e.preventDefault();
+        setGateway(e.key === "l" ? "share" : "ticket");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mail, busy, gateway, me, onCompose, run, move, trash, junk, isDrafts]);
+
+  const back = (
+    <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
+      <ArrowLeft className="size-4" />
+    </button>
+  );
+
+  if (error)
+    return (
+      <div className="flex flex-1 flex-col">
+        <header className="flex h-[52px] items-center border-b border-line px-3 md:hidden">{back}</header>
+        <Centered>
+          <p className="max-w-[320px] text-center text-[13px] text-ink-3">{error}</p>
+        </Centered>
+      </div>
+    );
+  if (!mail)
+    return (
+      <Centered>
+        <Loader2 className="size-5 animate-spin text-ink-3" />
+      </Centered>
+    );
+
+  const n = conversation ? ` la conversation (${folderUids.length > 1 ? `${folderUids.length} mails` : "1 mail"})` : "";
+  const waiting = later.find((l) => l.kind !== "send" && ((!!mail.messageId && l.messageIds.includes(mail.messageId)) || l.refs.some((r) => r.folder === folder && r.uid === uid)));
+  const snoozed = waiting?.kind === "snooze";
+  const snoozeTo = async (until: Date) => {
+    try {
+      await api("/api/mail/later", { method: "POST", json: { action: "snooze", folder, uids: conversation ? folderUids : [uid], until: until.toISOString() } });
+      onLater();
+      onBack();
+      toast.success(`Reporté jusqu'à ${whenText(until)}`, { description: "Il revient en haut de la boîte, non lu." });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const followUp = async (at: Date) => {
+    try {
+      await api("/api/mail/later", { method: "POST", json: { action: "followup", folder, uid, at: at.toISOString() } });
+      onLater();
+      toast.success(`Relance ${whenText(at)} si personne n'a répondu`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const endWaiting = async () => {
+    if (!waiting) return;
+    try {
+      await api(`/api/mail/later?id=${encodeURIComponent(waiting.id)}`, { method: "DELETE" });
+      onLater();
+      if (waiting.kind === "snooze") {
+        onBack();
+        toast.success("De retour dans la boîte de réception");
+      } else toast("Relance annulée");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <article className="flex min-h-0 flex-1 flex-col">
+      <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line px-3 md:px-6">
+        {back}
+        <span className="min-w-0 truncate text-[12px] text-ink-3 max-sm:hidden">
+          {conversation ? `Conversation · ${members.length} mails` : new Date(mail.date).toLocaleString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+        </span>
+        <span className="flex-1" />
+        <Action label={`Archiver${n} (E)`} Icon={Archive} onClick={() => run({ type: "archive" })} />
+        {trash ? (
+          <Action label={`Supprimer définitivement${n} (#)`} Icon={Trash2} onClick={() => run({ type: "delete" })} />
+        ) : (
+          <Action label={`Corbeille${n ? ` :${n}` : ""} (#)`} Icon={Trash2} onClick={() => run({ type: "trash" })} />
+        )}
+        {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} className="max-sm:hidden" /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} className="max-sm:hidden" />}
+        <Action label={`Déplacer${n} (V)`} Icon={FolderInput} onClick={move} />
+        <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} className="max-sm:hidden" />
+        {sent ? (
+          <WhenMenu kind="followup" title="Relance-moi sans réponse" onPick={(d) => void followUp(d)}>
+            {(toggle, open) => <Action label="Relance-moi si pas de réponse" Icon={BellRing} onClick={toggle} active={open} />}
+          </WhenMenu>
+        ) : (
+          !isDrafts &&
+          !snoozed && (
+            <WhenMenu kind="snooze" title={`Reporter${n} jusqu'à`} onPick={(d) => void snoozeTo(d)}>
+              {(toggle, open) => <Action label={`Reporter${n}`} Icon={AlarmClock} onClick={toggle} active={open} />}
+            </WhenMenu>
+          )
+        )}
+        {ai && !isDrafts && <Action label="Aide IA : résumé et brouillon de réponse" Icon={Sparkles} active={aiOpen} onClick={() => setAiOpen(!aiOpen)} />}
+        <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
+        <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
+        {isDrafts ? (
+          <button onClick={() => onCompose(composeFrom(mail, "draft", me))} className="press flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-[12.5px] font-medium text-accent-ink">
+            <PencilLine className="size-3.5" /> Reprendre
+          </button>
+        ) : (
+          <>
+            <Action label="Répondre (R)" Icon={Reply} onClick={() => onCompose(composeFrom(mail, "reply", me))} />
+            <Action label="Répondre à tous (A)" Icon={ReplyAll} onClick={() => onCompose(composeFrom(mail, "replyAll", me))} />
+            <Action label="Transférer (F)" Icon={Forward} onClick={() => onCompose(composeFrom(mail, "forward", me))} />
+          </>
+        )}
+        <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
+        <Action label="Partager dans Lamio (L)" Icon={MessageSquareShare} onClick={() => setGateway("share")} className="max-sm:hidden" />
+        <Action label="Créer un ticket TickUp (T)" Icon={TicketPlus} onClick={() => setGateway("ticket")} className="max-sm:hidden" />
+        <MoreActions
+          items={[
+            junk ? { label: "Pas un spam", Icon: ShieldCheck, onClick: () => run({ type: "move", to: "INBOX" }) } : { label: "Spam", Icon: ShieldAlert, onClick: () => run({ type: "spam" }) },
+            { label: "Marquer comme non lu", Icon: MailOpen, onClick: () => run({ type: "seen", value: false }) },
+            { label: "Partager dans Lamio", Icon: MessageSquareShare, onClick: () => setGateway("share") },
+            { label: "Créer un ticket TickUp", Icon: TicketPlus, onClick: () => setGateway("ticket") },
+          ]}
+        />
+      </header>
+      {gateway === "share" && <ShareDialog mail={mail} onClose={() => setGateway(null)} />}
+      {gateway === "ticket" && (
+        <TicketDialog
+          mail={mail}
+          initial={ticketInit}
+          onClose={() => {
+            setGateway(null);
+            setTicketInit(undefined);
+          }}
+        />
+      )}
+      <div className="scroll-thin flex-1 overflow-y-auto px-6 py-6 max-md:px-4">
+        <div className="mx-auto max-w-[720px]">
+          {waiting && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-accent/25 bg-accent-soft px-3 py-2 text-[13px] text-accent">
+              {waiting.kind === "snooze" ? <AlarmClock className="size-4" /> : <BellRing className="size-4" />}
+              <span className="min-w-0 flex-1">{waiting.kind === "snooze" ? `Reporté : revient ${whenText(waiting.due)}` : `Relance ${whenText(waiting.due)} si personne n'a répondu`}</span>
+              <button onClick={() => void endWaiting()} className="press h-7 rounded-md px-2 font-medium hover:bg-accent/10">
+                {waiting.kind === "snooze" ? "Faire revenir maintenant" : "Annuler la relance"}
+              </button>
+            </div>
+          )}
+          {aiOpen && (
+            <AiPanel
+              mail={mail}
+              onClose={() => setAiOpen(false)}
+              onDraft={(text) => onCompose({ ...composeFrom(mail, "reply", me), html: aiTextToHtml(text) })}
+              onTicket={(init) => {
+                setTicketInit(init);
+                setGateway("ticket");
+              }}
+            />
+          )}
+          <h2 className="text-[22px] leading-tight font-semibold tracking-[-0.01em]">{mail.subject || "(sans objet)"}</h2>
+          {conversation ? (
+            <ol className="mt-4 flex flex-col gap-2">
+              {members.map((m) =>
+                m.folder === folder && m.uid === uid ? (
+                  <li key={keyOf(m)} className="rounded-xl border border-line-strong bg-surface p-4 max-md:p-3">
+                    <MailHead mail={mail} date />
+                    {folder === "INBOX" && <SortBar mail={mail} onChange={(category) => setMail((m) => (m ? { ...m, category } : m))} />}
+                    <MailBody mail={mail} onChange={setMail} />
+                  </li>
+                ) : (
+                  <ThreadItem key={keyOf(m)} summary={m} me={me} />
+                ),
+              )}
+            </ol>
+          ) : (
+            <>
+              <div className="mt-4">
+                <MailHead mail={mail} />
+                {folder === "INBOX" && <SortBar mail={mail} onChange={(category) => setMail((m) => (m ? { ...m, category } : m))} />}
+              </div>
+              <MailBody mail={mail} onChange={setMail} />
+            </>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** The scheduled sends and the follow-ups: send now, or cancel. */
+function LaterPanel({ items, onClose, onChanged }: { items: MailLaterInfo[]; onClose: () => void; onChanged: () => void }) {
+  const list = items.filter((i) => i.kind !== "snooze");
+  const act = async (i: MailLaterInfo, now: boolean) => {
+    try {
+      if (now) await api("/api/mail/later", { method: "POST", json: { action: "now", id: i.id } });
+      else await api(`/api/mail/later?id=${encodeURIComponent(i.id)}`, { method: "DELETE" });
+      onChanged();
+      toast.success(now ? "Mail envoyé" : i.kind === "send" ? "Envoi annulé" : "Relance annulée");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  return (
+    <Modal title="Programmés" onClose={onClose}>
+      {!list.length && <p className="text-[13px] text-ink-3">Rien de prévu.</p>}
+      <ul className="flex flex-col gap-2">
+        {list.map((i) => (
+          <li key={i.id} className="rounded-xl border border-line p-3">
+            <p className="flex items-center gap-1.5 text-[12px] text-ink-3">
+              {i.kind === "send" ? <Send className="size-3.5" /> : <BellRing className="size-3.5" />}
+              {i.kind === "send" ? `Part ${whenText(i.due)}` : `Relance ${whenText(i.due)}`}
+            </p>
+            <p className="mt-1 truncate text-[13.5px] font-medium">{i.subject || "(sans objet)"}</p>
+            {i.to && <p className="truncate text-[12.5px] text-ink-3">À {i.to}</p>}
+            <div className="mt-2 flex gap-2">
+              {i.kind === "send" && (
+                <Button variant="primary" onClick={() => void act(i, true)}>
+                  Envoyer maintenant
+                </Button>
+              )}
+              <Button variant="ghost" onClick={() => void act(i, false)}>
+                {i.kind === "send" ? "Annuler l'envoi" : "Annuler la relance"}
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Modal>
+  );
+}
+
+/** Important / Newsletters / Notifications above the list of the inbox, with their unread mails. */
+function InboxTabs({ tab, counts, onChange }: { tab: InboxTab; counts: Record<MailCategory, number> | null; onChange: (t: InboxTab) => void }) {
+  return (
+    <div role="tablist" aria-label="Boîte triée" className="scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-line px-2 py-1.5">
+      {TABS.map((t) => {
+        const n = t.id !== "all" ? (counts?.[t.id] ?? 0) : 0;
+        const on = t.id === tab;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={on}
+            onClick={() => onChange(t.id)}
+            className={cn("press flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] whitespace-nowrap", on ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}
+          >
+            {t.label}
+            {n > 0 && <span className={cn("tabular rounded-full px-1.5 text-[11px] leading-[18px]", on ? "bg-accent text-accent-ink" : "bg-ink/[0.07] text-ink-2")}>{n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Where the sorted inbox puts this sender ("Toujours dans …"), and leaving its mailing list. */
+function SortBar({ mail, onChange }: { mail: MailContent; onChange: (c: MailCategory) => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const category = mail.category ?? "important";
+  const who = mail.from.name || mail.from.address;
+  useEffect(() => {
+    if (!confirm) return;
+    const t = setTimeout(() => setConfirm(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirm]);
+
+  const move = async (next: MailCategory) => {
+    if (next === category || !mail.from.address) return;
+    onChange(next);
+    try {
+      await api("/api/mail/sender-rule", { method: "PUT", json: { address: mail.from.address, category: next } });
+      toast.success(`Les mails de ${who} iront dans ${CATEGORY_NAME[next]}`);
+    } catch (e) {
+      onChange(category);
+      toast.error((e as Error).message);
+    }
+  };
+  const leave = async () => {
+    if (!confirm) return setConfirm(true);
+    setBusy(true);
+    try {
+      const r = await api<{ done?: "web" | "mail"; open?: string }>("/api/mail/unsubscribe", { method: "POST", json: { folder: mail.folder, uid: mail.uid } });
+      if (r.open) {
+        window.open(r.open, "_blank", "noopener,noreferrer");
+        toast("La page de désabonnement s'est ouverte", { description: "Termine là-bas si elle demande une confirmation." });
+      } else toast.success(`Désabonné de ${who}`, { description: r.done === "mail" ? "La demande est partie par mail." : undefined });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+      setConfirm(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3">
+      <label className="flex items-center gap-1.5">
+        <span>Classé dans</span>
+        <select
+          value={category}
+          onChange={(e) => void move(e.target.value as MailCategory)}
+          title={`Toujours ranger les mails de ${mail.from.address}`}
+          className="h-7 rounded-md border border-line-strong bg-surface px-1.5 text-[12.5px] text-ink"
+        >
+          {(Object.keys(CATEGORY_NAME) as MailCategory[]).map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_NAME[c]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {mail.unsubscribe && (
+        <button
+          onClick={() => void leave()}
+          disabled={busy}
+          className={cn("press flex h-7 items-center gap-1.5 rounded-md border px-2.5", confirm ? "border-danger/40 bg-danger/10 font-medium text-danger" : "border-line-strong bg-surface text-ink-2 hover:text-ink")}
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <MailX className="size-3.5" />}
+          {confirm ? "Confirmer le désabonnement" : "Se désabonner"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Who wrote, to whom, and when (in a conversation). */
+function MailHead({ mail, date }: { mail: Pick<MailSummary, "from" | "to" | "cc" | "date">; date?: boolean }) {
+  const recipients = [...mail.to, ...mail.cc];
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar id={mail.from.address || mail.from.name} name={who(mail.from)} size="lg" />
+      <div className="min-w-0 flex-1 text-[13px] leading-snug">
+        <p className="flex items-baseline gap-2">
+          <span className="min-w-0 truncate">
+            <span className="font-semibold">{who(mail.from)}</span>
+            {mail.from.name && mail.from.address && <span className="text-ink-3"> &lt;{mail.from.address}&gt;</span>}
+          </span>
+          {date && <span className="tabular ml-auto shrink-0 text-[12px] text-ink-3">{new Date(mail.date).toLocaleString("fr-CH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
+        </p>
+        {recipients.length > 0 && (
+          <p className="truncate text-ink-3" title={recipients.map((r) => r.address).join(", ")}>
+            À {recipients.map(who).join(", ")}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Another mail of the conversation: one line, opened on a click (read from the copy or the server). */
+function ThreadItem({ summary, me }: { summary: MailSummary; me: string[] }) {
+  const [open, setOpen] = useState(false);
+  const [mail, setMail] = useState<MailContent | null>(null);
+  const [error, setError] = useState("");
+  const mine = me.some((a) => a.toLowerCase() === summary.from.address.toLowerCase());
+
+  useEffect(() => {
+    if (!open || mail) return;
+    api<{ mail: MailContent }>(`/api/mail/message?folder=${encodeURIComponent(summary.folder)}&uid=${summary.uid}`).then(
+      (r) => setMail(r.mail),
+      (e: Error) => setError(e.message),
+    );
+  }, [open, mail, summary.folder, summary.uid]);
+
+  return (
+    <li className={cn("rounded-xl border border-line", open ? "bg-surface p-4 max-md:p-3" : "bg-surface-2/60 hover:border-line-strong")}>
+      {open ? (
+        <>
+          <button onClick={() => setOpen(false)} className="w-full text-left" aria-expanded>
+            <MailHead mail={summary} date />
+          </button>
+          {mail ? <MailBody mail={mail} onChange={setMail} /> : error ? <p className="mt-4 text-[13px] text-ink-3">{error}</p> : <Loader2 className="mt-4 size-4 animate-spin text-ink-3" />}
+        </>
+      ) : (
+        <button onClick={() => setOpen(true)} aria-expanded={false} className="flex w-full items-center gap-3 px-4 py-2.5 text-left max-md:px-3">
+          <Avatar id={summary.from.address || summary.from.name} name={who(summary.from)} size="sm" />
+          <span className="w-28 shrink-0 truncate text-[13px] font-medium">{mine ? "Moi" : who(summary.from)}</span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">{summary.preview || summary.subject}</span>
+          <span className="tabular shrink-0 text-[11.5px] text-ink-3">{shortDate(summary.date)}</span>
+        </button>
+      )}
+    </li>
+  );
+}
+
+/** The files and the text (or the page) of a mail. */
+function MailBody({ mail, onChange }: { mail: MailContent; onChange: (mail: MailContent) => void }) {
+  const [showImages, setShowImages] = useState(false);
+  const [asText, setAsText] = useState(false);
+  const [preview, setPreview] = useState<MailAttachment | null>(null);
+
+  const trust = async (trusted: boolean) => {
+    try {
+      await api("/api/mail/trust", { method: "POST", json: { address: mail.from.address, trusted } });
+      onChange({ ...mail, trusted });
+      if (!trusted) setShowImages(false);
+      toast.success(trusted ? `Les images de ${mail.from.address} s'afficheront toujours` : "Les images de cet expéditeur seront de nouveau bloquées");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  return (
+    <>
+      {mail.attachmentList.length > 0 && (
+        <ul className="mt-5 flex flex-wrap gap-2">
+          {mail.attachmentList.map((a) => {
+            const image = PREVIEW_IMAGES.has(a.type);
+            const pdf = a.type === "application/pdf";
+            const Icon = image ? ImageIcon : pdf ? FileText : File;
+            const label = (
+              <>
+                <Icon className="size-4 shrink-0 text-ink-3" />
+                <span className="min-w-0 truncate">{a.name}</span>
+                {a.size > 0 && <span className="shrink-0 text-ink-3">{fileSize(a.size)}</span>}
+              </>
+            );
+            const chip = "press flex max-w-[280px] items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[12.5px] hover:border-line-strong";
+            return (
+              <li key={a.part} className="flex items-center">
+                {image ? (
+                  <button onClick={() => setPreview(a)} className={cn(chip, "rounded-r-none")} title={`Voir ${a.name}`}>
+                    {label}
+                  </button>
+                ) : pdf ? (
+                  <a href={attachmentUrl(mail, a, true)} target="_blank" rel="noreferrer" className={cn(chip, "rounded-r-none")} title={`Ouvrir ${a.name}`}>
+                    {label}
+                  </a>
+                ) : (
+                  <a href={attachmentUrl(mail, a)} download={a.name} className={chip} title={`Télécharger ${a.name}`}>
+                    {label}
+                    <Download className="size-3.5 shrink-0 text-ink-3" />
+                  </a>
+                )}
+                {(image || pdf) && (
+                  <a href={attachmentUrl(mail, a)} download={a.name} aria-label={`Télécharger ${a.name}`} className="press flex self-stretch items-center rounded-r-lg border border-l-0 border-line bg-surface-2 px-2 text-ink-3 hover:border-line-strong hover:text-ink">
+                    <Download className="size-3.5" />
+                  </a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {mail.html && !asText ? (
+        <div className="mt-6">
+          {mail.remoteImages && !(showImages || mail.trusted) && (
+            <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
+              <ShieldAlert className="size-4 shrink-0 text-ink-3" />
+              <span className="min-w-[12rem] flex-1">Images bloquées : elles peuvent dire à l&apos;expéditeur quand et où tu ouvres ce mail.</span>
+              <button onClick={() => setShowImages(true)} className="press font-medium text-accent hover:underline">
+                Afficher les images
+              </button>
+              {mail.from.address && (
+                <button onClick={() => void trust(true)} className="press font-medium text-accent hover:underline">
+                  Toujours pour cet expéditeur
+                </button>
+              )}
+            </div>
+          )}
+          <MailFrame html={mail.html} showImages={showImages || mail.trusted} title={mail.subject || "Mail"} />
+          <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3">
+            <button onClick={() => setAsText(true)} className="press flex items-center gap-1 hover:text-ink">
+              <FileText className="size-3.5" /> Voir en texte
+            </button>
+            {mail.trusted && mail.remoteImages && (
+              <button onClick={() => void trust(false)} className="press flex items-center gap-1 hover:text-ink">
+                <Eye className="size-3.5" /> Images toujours affichées pour {mail.from.address} · ne plus les afficher
+              </button>
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-6 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap text-ink">{mail.text ? <Linkified text={mail.text} /> : <span className="text-ink-3">(mail sans texte)</span>}</div>
+          {mail.html && (
+            <button onClick={() => setAsText(false)} className="press mt-6 flex items-center gap-1 text-[12px] text-ink-3 hover:text-ink">
+              <Eye className="size-3.5" /> Voir la mise en page d&apos;origine
+            </button>
+          )}
+        </>
+      )}
+      {preview && <ImagePreview src={attachmentUrl(mail, preview, true)} name={preview.name} download={attachmentUrl(mail, preview)} onClose={() => setPreview(null)} />}
+    </>
+  );
+}
+
+/** On a phone, the less used actions of a mail live behind "…". */
+function MoreActions({ items }: { items: { label: string; Icon: typeof Reply; onClick: () => void }[] }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof PointerEvent && (e.target as HTMLElement).closest("[data-more-actions]")) return;
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <div data-more-actions className="relative sm:hidden">
+      <Action label="Plus d'actions" Icon={MoreHorizontal} onClick={() => setOpen((o) => !o)} active={open} />
+      {open && (
+        <div role="menu" className="absolute top-9 right-0 z-30 w-[220px] rounded-xl border border-line-strong bg-surface p-1 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.35)]">
+          {items.map(({ label, Icon, onClick }) => (
+            <button
+              key={label}
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onClick();
+              }}
+              className="press flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] hover:bg-ink/[0.04]"
+            >
+              <Icon className="size-4 text-ink-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Action({ label, Icon, onClick, active, small, className }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean; small?: boolean; className?: string }) {
+  return (
+    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex shrink-0 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", small ? "size-7" : "size-8", active ? "text-accent" : "text-ink-3", className)}>
+      <Icon className="size-4" />
+    </button>
+  );
+}
+
+const SHORTCUTS: { title: string; keys: [string[], string][] }[] = [
+  {
+    title: "Parcourir",
+    keys: [
+      [["J"], "Mail suivant"],
+      [["K"], "Mail précédent"],
+      [["O"], "Ouvrir le premier mail"],
+      [["Échap"], "Revenir à la liste, fermer"],
+      [["/"], "Rechercher"],
+      [["G", "I"], "Boîte de réception"],
+      [["G", "S"], "Envoyés"],
+      [["G", "D"], "Brouillons"],
+      [["G", "A"], "Archives"],
+      [["G", "T"], "Corbeille"],
+      [["G", "J"], "Spam"],
+    ],
+  },
+  {
+    title: "Écrire",
+    keys: [
+      [["C"], "Nouveau mail"],
+      [["R"], "Répondre"],
+      [["A"], "Répondre à tous"],
+      [["F"], "Transférer"],
+      [["⌘", "Entrée"], "Envoyer"],
+    ],
+  },
+  {
+    title: "Avec Lamio et TickUp",
+    keys: [
+      [["L"], "Partager dans une conversation"],
+      [["T"], "Créer un ticket TickUp"],
+    ],
+  },
+  {
+    title: "Ranger",
+    keys: [
+      [["E"], "Archiver"],
+      [["#"], "Corbeille"],
+      [["!"], "Spam"],
+      [["V"], "Déplacer"],
+      [["S"], "Drapeau"],
+      [["U"], "Marquer non lu"],
+      [["Maj", "I"], "Marquer lu (sélection)"],
+      [["Maj", "U"], "Marquer non lu (sélection)"],
+      [["Z"], "Annuler la dernière action"],
+    ],
+  },
+  {
+    title: "Sélection et affichage",
+    keys: [
+      [["X"], "Sélectionner le mail ouvert"],
+      [["Maj", "clic"], "Sélectionner une plage"],
+      [["⌘", "\\"], "Replier la barre latérale"],
+      [["⌘", "K"], "Tout trouver dans Lamio"],
+      [["?"], "Cette aide"],
+    ],
+  },
+];
+
+/** Every shortcut of the Mails tab. ? or Escape closes it. */
+function ShortcutsHelp({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(15,14,12,0.3)] p-4 backdrop-blur-[2px]" onClick={onClose}>
+      <div role="dialog" aria-label="Raccourcis clavier" className="scroll-thin max-h-full w-[min(760px,100%)] overflow-y-auto rounded-2xl border border-line-strong bg-surface p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center">
+          <h2 className="flex-1 text-[16px] font-semibold">Raccourcis clavier</h2>
+          <button onClick={onClose} aria-label="Fermer" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+          {SHORTCUTS.map((g) => (
+            <section key={g.title}>
+              <h3 className="mb-1.5 text-[11px] font-medium tracking-wide text-ink-3 uppercase">{g.title}</h3>
+              <ul className="flex flex-col">
+                {g.keys.map(([keys, label]) => (
+                  <li key={label} className="flex h-7 items-center gap-3 text-[13px]">
+                    <span className="flex-1 text-ink-2">{label}</span>
+                    <span className="flex items-center gap-1">
+                      {keys.map((k, i) => (
+                        <Kbd key={i}>{k}</Kbd>
+                      ))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function EmptyReader({ count }: { count: number }) {
+  return (
+    <Centered>
+      <div className="flex flex-col items-center gap-3 text-center text-[13px] text-ink-3">
+        <Mail className="size-7" strokeWidth={1.4} />
+        <p>{count > 0 ? `${count} mail${count > 1 ? "s" : ""} non lu${count > 1 ? "s" : ""}.` : "Tout est lu."}</p>
+        <p className="flex items-center gap-1.5 text-[12px]">
+          <Kbd>J</Kbd>
+          <Kbd>K</Kbd>
+          pour passer d&apos;un mail à l&apos;autre
+        </p>
+        <p className="flex items-center gap-1.5 text-[12px]">
+          <Kbd>?</Kbd>
+          pour tous les raccourcis
+        </p>
+      </div>
+    </Centered>
+  );
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return <div className="flex flex-1 items-center justify-center p-6">{children}</div>;
+}
+
+function NoMailbox({ enabled }: { enabled: boolean }) {
+  return (
+    <Centered>
+      <Card className="flex max-w-[420px] flex-col items-center gap-3 text-center">
+        <span className="flex size-11 items-center justify-center rounded-xl bg-accent-soft text-accent">
+          <Mail className="size-5" />
+        </span>
+        <h1 className="font-display text-[26px] leading-none">Tes mails dans Lamio</h1>
+        <p className="text-[13.5px] text-ink-2">
+          {enabled
+            ? "Branche ta boîte Infomaniak : tes mails arrivent ici en direct, et tout ce que tu fais se retrouve dans le webmail et sur ton iPhone."
+            : "Les mails ne sont pas encore activés sur ce serveur (il manque la clé MAIL_SECRET)."}
+        </p>
+        {enabled && (
+          <Link href="/settings">
+            <Button variant="primary">Brancher ma boîte</Button>
+          </Link>
+        )}
+      </Card>
+    </Centered>
+  );
+}

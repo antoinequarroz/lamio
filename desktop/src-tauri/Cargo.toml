@@ -1,8 +1,12 @@
 [package]
 name = "lamio"
 version = "0.4.0"
-description = "Lamio pour Mac"
+description = "Lamio pour Mac et iPhone"
 edition = "2021"
+
+[lib]
+name = "lamio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -10,6 +14,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2.8", features = [] }
 tauri-plugin-opener = "2"
+
+# Mac notifications from the page. On the iPhone, notifications come from the server (APNs).
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+tauri-plugin-notification = "2"
 
 [profile.release]
 opt-level = "s"

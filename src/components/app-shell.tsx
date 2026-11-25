@@ -1,24 +1,28 @@
 "use client";
 
-import { ArrowUpRight, CalendarDays, Hash, LayoutGrid, Lock, MessagesSquare, Plus, Search, Settings, SquarePen } from "lucide-react";
+import { ArrowUpRight, CalendarDays, Hash, LayoutGrid, Lock, Mail, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
+import { registerIosPush } from "@/lib/ios-push";
 import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
+import { useStored } from "@/lib/use-stored";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
 import { APP_NAME, cn, moduleLink } from "@/lib/utils";
 import { CallWindow } from "./call";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
+import { ResizeHandle } from "./resize-handle";
 import { Logo } from "./logo";
 import { ModulePicto } from "./module-icon";
 import { Avatar, Kbd, primaryClass } from "./ui";
 
 const NAV = [
   { href: "/c", label: "Messagerie", Icon: MessagesSquare },
+  { href: "/mail", label: "Mails", Icon: Mail },
   { href: "/calendar", label: "Calendrier", Icon: CalendarDays },
   { href: "/modules", label: "Modules", Icon: LayoutGrid },
   { href: "/settings", label: "Réglages", Icon: Settings },
@@ -40,23 +44,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { commandOpen, setCommandOpen, dialog, setDialog } = useApp();
+  // The sidebar's width, or folded into a narrow rail of icons (⌘\ or the button).
+  const [side, setSide] = useStored("app-sidebar", SIDEBAR, (v): v is typeof SIDEBAR => !!v && typeof (v as typeof SIDEBAR).width === "number");
+
+  // The iPhone app's push token, registered under this account.
+  useEffect(() => registerIosPush(), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setCommandOpen(!commandOpen);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        setSide((s) => ({ ...s, collapsed: !s.collapsed }));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [commandOpen, setCommandOpen]);
+  }, [commandOpen, setCommandOpen, setSide]);
 
   return (
     <div className="flex h-dvh min-h-0">
-      <aside className="flex w-[248px] shrink-0 flex-col gap-1 px-3 py-3 max-md:hidden">
-        <Sidebar />
-      </aside>
+      {side.collapsed ? (
+        <aside className="flex w-[60px] shrink-0 flex-col items-center gap-1 py-3 max-md:hidden">
+          <Rail onExpand={() => setSide({ ...side, collapsed: false })} />
+        </aside>
+      ) : (
+        <>
+          <aside style={{ width: side.width }} className="flex shrink-0 flex-col gap-1 px-3 py-3 max-md:hidden">
+            <Sidebar onCollapse={() => setSide({ ...side, collapsed: true })} />
+          </aside>
+          <ResizeHandle label="Largeur de la barre latérale" className="after:bg-transparent" width={side.width} min={208} max={380} onChange={(w) => setSide({ ...side, width: w })} onReset={() => setSide({ ...side, width: SIDEBAR.width })} />
+        </>
+      )}
       <main className="flex min-w-0 flex-1 flex-col p-2 pl-0 max-md:p-0">
         <MobileBar />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0">{children}</div>
@@ -66,14 +87,60 @@ function Shell({ children }: { children: React.ReactNode }) {
       <CallWindow />
       {dialog === "channel" && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === "dm" && <NewDmDialog onClose={() => setDialog(null)} />}
-      <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
+      <Toaster
+        position="bottom-right"
+        // On the iPhone the page runs under the notch and the home bar: keep toasts clear of them.
+        offset={{ top: "calc(24px + env(safe-area-inset-top))", right: "calc(24px + env(safe-area-inset-right))", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "calc(24px + env(safe-area-inset-left))" }}
+        mobileOffset={{ top: "calc(16px + env(safe-area-inset-top))", right: "calc(16px + env(safe-area-inset-right))", bottom: "calc(16px + env(safe-area-inset-bottom))", left: "calc(16px + env(safe-area-inset-left))" }}
+        toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
     </div>
   );
 }
 
-function Sidebar() {
+const SIDEBAR = { width: 248, collapsed: false };
+
+/** The folded sidebar: the sections as icons, with a dot when something is unread. */
+function Rail({ onExpand }: { onExpand: () => void }) {
   const pathname = usePathname();
-  const { me, conversations, modules, setCommandOpen, setDialog } = useApp();
+  const { me, conversations, mail, setCommandOpen, setDialog } = useApp();
+  const unread = conversations.reduce((n, c) => n + c.unread, 0);
+  const nav = useNav();
+  const button = "press relative flex size-10 items-center justify-center rounded-lg";
+  return (
+    <>
+      <button onClick={onExpand} aria-label="Déplier la barre latérale (⌘\)" title="Déplier la barre latérale (⌘\)" className={cn(button, "mb-2")}>
+        <Logo />
+      </button>
+      <button onClick={() => setDialog("dm")} aria-label="Nouveau message" title="Nouveau message" className={cn(button, primaryClass)}>
+        <SquarePen className="size-4" strokeWidth={2.2} />
+      </button>
+      <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" title="Rechercher (⌘K)" className={cn(button, "mb-2 text-ink-2 hover:bg-ink/[0.05] hover:text-ink")}>
+        <Search className="size-4" />
+      </button>
+      {nav.map(({ href, label, Icon }) => {
+        const active = pathname.startsWith(href);
+        const dot = (href === "/c" && unread > 0) || (href === "/mail" && !!mail?.unread);
+        return (
+          <Link key={href} href={href} aria-label={label} title={label} className={cn(button, active ? "bg-surface text-ink shadow-card" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}>
+            <Icon className={cn("size-[18px]", active ? "text-accent" : "text-ink-3")} />
+            {dot && <span className="absolute top-2 right-2 size-2 rounded-full bg-accent ring-2 ring-bg" />}
+          </Link>
+        );
+      })}
+      <span className="flex-1" />
+      <button onClick={onExpand} aria-label="Déplier la barre latérale" title="Déplier la barre latérale (⌘\)" className={cn(button, "text-ink-3 hover:bg-ink/[0.05] hover:text-ink")}>
+        <PanelLeftOpen className="size-4" />
+      </button>
+      <Link href="/settings" aria-label={me.name} title={me.name} className="mt-1">
+        <Avatar id={me.id} name={me.name} size="sm" />
+      </Link>
+    </>
+  );
+}
+
+function Sidebar({ onCollapse }: { onCollapse: () => void }) {
+  const pathname = usePathname();
+  const { me, conversations, modules, mail, setCommandOpen, setDialog } = useApp();
   const unread = conversations.reduce((n, c) => n + c.unread, 0);
   const mine = conversations.reduce((n, c) => n + forMe(c), 0);
   const linked = modules.filter((m) => m.status === "linked" && moduleLink(m));
@@ -85,6 +152,9 @@ function Sidebar() {
         <Logo />
         <span className="text-[15px] font-semibold tracking-[-0.01em]">{APP_NAME}</span>
         <span className="ml-auto rounded-md border border-line px-1.5 py-px font-mono text-[10px] text-ink-3">v{APP_VERSION}</span>
+        <button onClick={onCollapse} aria-label="Replier la barre latérale" title="Replier la barre latérale (⌘\)" className="press -mr-1 flex size-7 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+          <PanelLeftClose className="size-4" />
+        </button>
       </div>
 
       <div className="mb-2 flex gap-1.5">
@@ -109,6 +179,7 @@ function Sidebar() {
               <Icon className={cn("size-4", active ? "text-accent" : "text-ink-3")} strokeWidth={2} />
               {label}
               {href === "/c" && unread > 0 && <Badge n={mine || unread} strong={mine > 0} />}
+              {href === "/mail" && !!mail?.unread && <Badge n={mail.unread} />}
             </Link>
           );
         })}
@@ -181,10 +252,32 @@ function Notifier() {
   const { listen, isReading, conversations, userById, titleOf, me, joinCall } = useApp();
   const latest = useRef({ conversations, userById, titleOf });
   latest.current = { conversations, userById, titleOf };
+  const pathname = useRef("");
+  pathname.current = usePathname();
 
   useEffect(
     () =>
       listen((event) => {
+        if (event.type === "mail" && event.reminder) {
+          // Something held by the server: a mail nobody answered, a scheduled send that left.
+          const r = event.reminder;
+          const open = r.uid ? () => router.push(`/mail?${new URLSearchParams({ ...(r.folder && r.folder !== "INBOX" ? { f: r.folder } : {}), m: String(r.uid) })}`) : undefined;
+          if (document.hidden) deviceNotify(r.title, r.body, `reminder${r.uid ?? r.title}`, open ?? (() => router.push("/mail")));
+          else toast(r.title, { description: r.body, icon: <Mail className="size-4" />, duration: 10_000, action: open ? { label: "Ouvrir", onClick: open } : undefined });
+          return;
+        }
+        if (event.type === "mail") {
+          // A new mail worth telling (the server applied the choice made in Réglages › Mails).
+          const alert = event.alert ?? [];
+          if (!alert.length || (pathname.current === "/mail" && !document.hidden)) return;
+          const many = alert.length > 1;
+          const title = many ? `${alert.length} nouveaux mails` : alert[0].from.name || alert[0].from.address;
+          const text = many ? alert.map((a) => a.from.name || a.from.address).join(", ") : alert[0].subject || "(sans objet)";
+          const open = () => router.push(many ? "/mail" : `/mail?m=${alert[0].uid}`);
+          if (document.hidden) deviceNotify(title, text, many ? "mail" : `mail${alert[0].uid}`, open);
+          else toast(title, { description: text, icon: <Mail className="size-4" />, action: { label: "Ouvrir", onClick: open } });
+          return;
+        }
         if (event.type !== "message") return;
         const m = event.message;
         const conversation = latest.current.conversations.find((c) => c.id === m.conversationId);

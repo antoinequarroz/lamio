@@ -82,6 +82,8 @@ export type AppState = {
   users: User[];
   conversations: Conversation[];
   modules: ModuleInfo[];
+  /** My mailbox, when one is plugged in: the unread mails of the inbox, for the Mails tab badge. */
+  mail: { unread: number } | null;
   /** The Calendrier tab (Alfred's calendar): whether I see it. */
   calendar: boolean;
   /** Video calls in conversations (through Alfred's video): whether they are plugged in. */
@@ -141,4 +143,140 @@ export type ServerEvent =
   | { type: "message"; message: Message }
   | { type: "message-updated"; message: Message }
   | { type: "message-deleted"; conversationId: string; id: number; parentId: number | null }
-  | { type: "refresh" };
+  | { type: "refresh" }
+  /** My mailbox changed (new mails, flags, folders) or its connection status did. */
+  | { type: "mail"; status: MailStatus; folders: string[]; live?: boolean; added?: MailSummary[]; alert?: MailSummary[]; sent?: { id: string; error?: string }; reminder?: MailReminder };
+
+// ---- Mails
+
+/** pending: never synced yet. auth: the server refused the password, nothing is retried until it changes. */
+export type MailStatus = "pending" | "syncing" | "ok" | "error" | "auth";
+
+export type MailAccountInfo = {
+  email: string;
+  username: string;
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+  status: MailStatus;
+  lastError: string | null;
+  syncedAt: string | null;
+  /** Added under each new mail (plain text). */
+  signature: string;
+  /** Which new mails notify: all, only from people I have written to, or none. */
+  notify: MailNotify;
+  /** The permanent IMAP IDLE connection is open: new mails arrive within a second or two. */
+  live: boolean;
+  /** The addresses I send from, the mailbox's own first (its signature is `signature`). */
+  identities: MailIdentity[];
+  /** The AI help (summary, draft reply) is on: the server has an Anthropic key. Filled by the routes. */
+  ai?: boolean;
+};
+
+/** Something a conversation asks of me, found by the AI help: a meeting, a task, an amount. */
+export type MailAiAction = {
+  kind: "rdv" | "tache" | "montant";
+  title: string;
+  /** Local time of Switzerland, "2026-11-27T14:00" (or "2026-11-27" for a whole day); empty when unknown. */
+  start: string;
+  end: string;
+  allDay: boolean;
+  amount: string;
+  details: string;
+};
+
+/** A conversation summed up by the AI help. */
+export type MailAiSummary = { summary: string; actions: MailAiAction[]; mails: number; at: string };
+
+/** An address I send from: the mailbox's own, or an alias delivered into it. */
+export type MailIdentity = {
+  address: string;
+  /** The name shown to the recipient; empty: my Lamio name. */
+  name: string;
+  signature: string;
+  primary: boolean;
+};
+
+export type MailNotify = "all" | "important" | "known" | "off";
+
+/** Something the server tells me about later: a mail nobody answered, a scheduled send that left. */
+export type MailReminder = { title: string; body: string; folder?: string; uid?: number };
+
+/** What waits on the server: a scheduled send, a snoozed mail, a follow-up. */
+export type MailLaterInfo = {
+  id: string;
+  kind: "send" | "snooze" | "followup";
+  due: string;
+  subject: string;
+  to: string;
+  messageIds: string[];
+  /** Where the mails are now (« Reportés » for a snooze, Sent for a follow-up). */
+  refs: { folder: string; uid: number }[];
+};
+
+/** The tabs of the sorted inbox. */
+export type MailCategory = "important" | "newsletter" | "notification";
+
+export type MailFolder = { path: string; name: string; delimiter: string; specialUse: string | null; total: number; unread: number };
+
+export type MailAddress = { name: string; address: string };
+
+/** A file of a mail; part is its place in the mail (IMAP section, "2" or "1.2"), to download it. */
+export type MailAttachment = { name: string; type: string; size: number; part: string };
+
+/**
+ * An opened mail. html is already cleaned on the server (see server/mail/html.ts), null for a
+ * text-only mail; remoteImages says it has images to load from the internet, blocked until asked;
+ * trusted: the person chose to always show the images of this sender.
+ */
+export type MailContent = MailSummary & { text: string; html: string | null; remoteImages: boolean; attachmentList: MailAttachment[]; trusted: boolean };
+
+/** A conversation, as a row of the list: shown with its newest mail of the folder. */
+export type MailThreadInfo = {
+  id: string;
+  /** Mails in the whole conversation (the folder, Sent, Archives…; not Trash or Spam). */
+  count: number;
+  /** Unread mails of the conversation in this folder. */
+  unread: number;
+  /** The uids of the conversation's mails in this folder: what an action on the row applies to. */
+  uids: number[];
+  /** Who wrote, oldest first ("moi" for my own mails). */
+  participants: string[];
+};
+
+export type MailSummary = {
+  /** Only in the "Par conversation" view. */
+  thread?: MailThreadInfo;
+  folder: string;
+  uid: number;
+  messageId: string | null;
+  subject: string;
+  from: MailAddress;
+  to: MailAddress[];
+  cc: MailAddress[];
+  date: string;
+  preview: string;
+  seen: boolean;
+  flagged: boolean;
+  answered: boolean;
+  attachments: boolean;
+  size: number;
+  /** Where the sorted inbox puts it (in the inbox and its tabs). */
+  category?: MailCategory;
+  /** It can be left in one click (List-Unsubscribe). */
+  unsubscribe?: boolean;
+};
+
+/** Who a mail is written to, and how it relates to another one. */
+export type ComposeMode = "new" | "reply" | "replyAll" | "forward" | "draft";
+
+/** What can be done to mails from Lamio (on the real mailbox). "delete" is for good, from the Trash or the Spam. */
+export type MailAction =
+  | { type: "seen"; value: boolean }
+  | { type: "flagged"; value: boolean }
+  | { type: "move"; to: string }
+  | { type: "archive" }
+  | { type: "trash" }
+  | { type: "spam" }
+  | { type: "delete" };

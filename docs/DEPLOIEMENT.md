@@ -192,3 +192,57 @@ cd deploy && docker compose up -d --build
 ```
 
 Les données sont dans le volume Docker `app-data`, elles ne bougent pas.
+
+## Mails (onglet Mails, en cours)
+
+Lamio peut se brancher sur la boîte mail de chacun (Infomaniak par défaut, ou tout serveur IMAP/SMTP), dans Réglages › Mails. Le mot de passe de la boîte est chiffré dans la base avec une clé qui reste dans le `.env`.
+
+Dans `~/lamio/.env` (faire d'abord une copie : `cp .env .env.bak-$(date +%F)`) :
+
+```env
+MAIL_SECRET=<openssl rand -base64 32>
+```
+
+Puis `cd ~/lamio/deploy && docker compose up -d --build`. Sans `MAIL_SECRET`, la section Mails affiche « pas encore activé » et rien d'autre ne change.
+
+- Ne change plus cette clé ensuite : les boîtes déjà branchées devraient être rebranchées (le mot de passe ne se déchiffre plus).
+- La sauvegarde de 3h15 contient la copie locale des mails (en-têtes et aperçus) et le mot de passe chiffré, jamais la clé.
+- Lamio refuse les serveurs du réseau privé (localhost, réseau Docker) et n'accepte que les ports 993/143 (IMAP) et 465/587 (SMTP).
+
+### Notifications push sur l'iPhone (facultatif)
+
+Pour qu'un nouveau mail arrive sur l'iPhone même app fermée, Lamio passe par les serveurs d'Apple (APNs). Il faut une clé du compte développeur Apple (Certificates, Identifiers & Profiles › Keys, case « Apple Push Notifications service »), téléchargée en `.p8`. Dans `~/lamio/.env` :
+
+```env
+APNS_KEY_FILE=/data/apns.p8      # ou APNS_KEY= le contenu du .p8, retours à la ligne en \n
+APNS_KEY_ID=<identifiant de la clé, 10 caractères>
+APNS_TEAM_ID=<identifiant de l'équipe Apple>
+APNS_TOPIC=<identifiant de l'app iPhone, son bundle id>
+APNS_SANDBOX=true                 # seulement pour une app lancée depuis Xcode, pas TestFlight
+```
+
+Sans ces réglages, rien n'est envoyé et rien d'autre ne change. L'app iPhone s'inscrit d'elle-même (`POST /api/push/devices`) ; un appareil qu'Apple refuse est oublié. Le choix « Tous les mails / Contacts connus / Aucun » de Réglages › Mails vaut aussi pour l'iPhone.
+
+### Faire d'un mail un ticket TickUp (facultatif)
+
+Le bouton « Créer un ticket TickUp » (touche T) écrit dans TickUp avec la clé d'un agent. Dans TickUp, Réglages › Agents IA › « Créer la clé », avec le nom « Lamio ». Puis, dans `~/lamio/.env`, à côté de `TICKUP_URL` :
+
+```env
+TICKUP_TOKEN=tku_…
+```
+
+Sans cette clé, la fenêtre explique comment la brancher et rien d'autre ne change. Les tickets portent le nom « Lamio » dans TickUp ; la clé se révoque depuis TickUp. « Partager dans Lamio » (touche L) n'a besoin d'aucun réglage.
+
+### Aide IA dans les mails (facultatif)
+
+Le bouton « Aide IA » (étincelles) d'un mail résume la conversation, repère ce qu'elle demande (rendez-vous à ajouter au calendrier d'Alfred, tâche ou montant à mettre dans TickUp) et rédige une réponse dans ton ton, appris sur tes derniers mails envoyés. Le brouillon s'ouvre dans la fenêtre de rédaction : rien ne part sans toi.
+
+Lamio passe par l'API d'Anthropic (Claude). Crée une clé sur console.anthropic.com (Settings › API keys), puis dans `~/lamio/.env` :
+
+```env
+ANTHROPIC_API_KEY=sk-ant-…
+```
+
+et reconstruis. Ne colle jamais cette clé dans une discussion. Sans clé, le bouton n'apparaît pas ; `MAIL_AI=off` l'éteint aussi avec une clé.
+
+Les mails ne partent chez Anthropic que quand tu appuies sur le bouton. Un résumé est gardé dans Lamio tant que la conversation ne change pas, donc le rouvrir ne coûte rien. Compter quelques centimes par résumé ou brouillon.

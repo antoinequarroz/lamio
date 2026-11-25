@@ -110,6 +110,77 @@ export function db() {
       user_id text not null references users (id) on delete cascade,
       primary key (module, user_id)
     );
+    -- Mails: the person's own mailbox (Infomaniak or any IMAP/SMTP server), one per account for now.
+    -- The password is encrypted with MAIL_SECRET (see server/mail/secret.ts), never stored in clear.
+    create table if not exists mail_accounts (
+      user_id text primary key references users (id) on delete cascade,
+      email text not null,
+      username text not null,
+      imap_host text not null,
+      imap_port integer not null,
+      smtp_host text not null,
+      smtp_port integer not null,
+      secret text not null,
+      -- pending, syncing, ok, error (will retry), auth (refused: waits for a new password)
+      status text not null default 'pending',
+      last_error text,
+      synced_at text,
+      created_at text not null
+    );
+    -- A local copy of the folders and message headers, so the list shows at once.
+    -- The mailbox on the server stays the reference: this cache can be dropped and rebuilt.
+    create table if not exists mail_folders (
+      user_id text not null references users (id) on delete cascade,
+      path text not null,
+      name text not null,
+      delimiter text not null default '/',
+      special_use text,
+      -- IMAP numbers, 64-bit: kept as text.
+      uid_validity text,
+      uid_next integer,
+      highest_modseq text,
+      total integer not null default 0,
+      unread integer not null default 0,
+      primary key (user_id, path)
+    );
+    create table if not exists mail_messages (
+      user_id text not null,
+      folder text not null,
+      uid integer not null,
+      message_id text,
+      in_reply_to text,
+      refs text,
+      subject text not null default '',
+      from_name text not null default '',
+      from_address text not null default '',
+      -- JSON: { to: [{ name, address }], cc: [...] }
+      recipients text not null default '{}',
+      date text not null,
+      preview text not null default '',
+      seen integer not null default 0,
+      flagged integer not null default 0,
+      answered integer not null default 0,
+      attachments integer not null default 0,
+      size integer not null default 0,
+      primary key (user_id, folder, uid),
+      foreign key (user_id, folder) references mail_folders (user_id, path) on delete cascade
+    );
+    create index if not exists mail_messages_date on mail_messages (user_id, folder, date desc);
+    -- Senders whose remote images are shown without asking ("Toujours pour cet expéditeur").
+    create table if not exists mail_trusted_senders (
+      user_id text not null references users (id) on delete cascade,
+      address text not null,
+      created_at text not null,
+      primary key (user_id, address)
+    );
+    -- Phones (and later Macs) that get a push notification for a new mail, by their APNs token.
+    create table if not exists push_devices (
+      token text primary key,
+      user_id text not null references users (id) on delete cascade,
+      platform text not null,
+      created_at text not null,
+      seen_at text not null
+    );
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {
@@ -121,8 +192,57 @@ export function db() {
   addColumn("conversations", "private", "integer not null default 0");
   addColumn("messages", "edited_at", "text");
   addColumn("messages", "parent_id", "integer references messages (id) on delete cascade");
+  // Mails: the text of a mail, kept once it has been opened.
+  addColumn("mail_messages", "body_text", "text");
+  // Mails: the signature added under each new mail.
+  addColumn("mail_accounts", "signature", "text not null default ''");
+  // Mails: which new mails notify (all, known = only people I have written to, off).
+  addColumn("mail_accounts", "notify", "text not null default 'all'");
+  // Mails: the conversation a mail belongs to (see threadOf in mail/store.ts), filled on insert.
+  addColumn("mail_messages", "thread_id", "text");
+  conn.exec("create index if not exists mail_messages_thread on mail_messages (user_id, thread_id)");
+  conn.exec("create index if not exists mail_messages_mid on mail_messages (user_id, message_id)");
   // A video call started in the conversation (its room lives in Alfred): {"slug","title"} as JSON.
   addColumn("messages", "call", "text");
+  // Mails, sorted inbox: what the headers say a mail is (null: not read yet), and how to leave its list.
+  addColumn("mail_messages", "kind", "text");
+  addColumn("mail_messages", "unsubscribe", "text");
+  // Mails held by the server for later: a scheduled send, a snooze, a follow-up (mail/later.ts).
+  conn.exec(`create table if not exists mail_later (
+    id text primary key,
+    user_id text not null references users (id) on delete cascade,
+    kind text not null,
+    due_at text not null,
+    data text not null,
+    created_at text not null
+  )`);
+  conn.exec("create index if not exists mail_later_due on mail_later (due_at)");
+  // "Toujours dans Important / Newsletters / Notifications" for a sender.
+  conn.exec(`create table if not exists mail_sender_rules (
+    user_id text not null references users (id) on delete cascade,
+    address text not null,
+    category text not null,
+    created_at text not null,
+    primary key (user_id, address)
+  )`);
+  // Mails: other addresses I send from with the same mailbox (aliases), each with its signature.
+  conn.exec(`create table if not exists mail_identities (
+    user_id text not null references users (id) on delete cascade,
+    address text not null,
+    name text not null default '',
+    signature text not null default '',
+    position integer not null default 0,
+    created_at text not null,
+    primary key (user_id, address)
+  )`);
+  // Mails, AI help: a conversation's summary, kept until the conversation changes (key = its mails).
+  conn.exec(`create table if not exists mail_ai (
+    user_id text not null references users (id) on delete cascade,
+    key text not null,
+    result text not null,
+    created_at text not null,
+    primary key (user_id, key)
+  )`);
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;
