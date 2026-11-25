@@ -173,10 +173,24 @@ function Notifier() {
   const { listen, isReading, conversations, userById, titleOf, me } = useApp();
   const latest = useRef({ conversations, userById, titleOf });
   latest.current = { conversations, userById, titleOf };
+  const pathname = useRef("");
+  pathname.current = usePathname();
 
   useEffect(
     () =>
       listen((event) => {
+        if (event.type === "mail") {
+          // A new mail worth telling (the server applied the choice made in Réglages › Mails).
+          const alert = event.alert ?? [];
+          if (!alert.length || (pathname.current === "/mail" && !document.hidden)) return;
+          const many = alert.length > 1;
+          const title = many ? `${alert.length} nouveaux mails` : alert[0].from.name || alert[0].from.address;
+          const text = many ? alert.map((a) => a.from.name || a.from.address).join(", ") : alert[0].subject || "(sans objet)";
+          const open = () => router.push(many ? "/mail" : `/mail?m=${alert[0].uid}`);
+          if (document.hidden) deviceNotify(title, text, many ? "mail" : `mail${alert[0].uid}`, open);
+          else toast(title, { description: text, icon: <Mail className="size-4" />, action: { label: "Ouvrir", onClick: open } });
+          return;
+        }
         if (event.type !== "message") return;
         const m = event.message;
         const conversation = latest.current.conversations.find((c) => c.id === m.conversationId);

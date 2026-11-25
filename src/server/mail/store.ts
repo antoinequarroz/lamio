@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/server/db";
-import type { MailAccountInfo, MailAttachment, MailAddress, MailFolder, MailStatus, MailSummary } from "@/lib/types";
+import type { MailAccountInfo, MailAttachment, MailAddress, MailFolder, MailNotify, MailStatus, MailSummary } from "@/lib/types";
 
 const now = () => new Date().toISOString();
 
@@ -21,6 +21,7 @@ type AccountRow = {
   last_error: string | null;
   synced_at: string | null;
   signature: string | null;
+  notify: string | null;
 };
 
 const toInfo = (r: AccountRow): MailAccountInfo => ({
@@ -34,6 +35,7 @@ const toInfo = (r: AccountRow): MailAccountInfo => ({
   lastError: r.last_error,
   syncedAt: r.synced_at,
   signature: r.signature ?? "",
+  notify: r.notify === "known" || r.notify === "off" ? r.notify : "all",
   // Known by the mail service only: the routes fill it in.
   live: false,
 });
@@ -302,6 +304,36 @@ export function setTrustedSender(userId: string, address: string, trusted: boole
   if (trusted) db().prepare("insert or ignore into mail_trusted_senders (user_id, address, created_at) values (?, ?, ?)").run(userId, normal(address), now());
   else db().prepare("delete from mail_trusted_senders where user_id = ? and address = ?").run(userId, normal(address));
 }
+
+export const setMailNotify = (userId: string, notify: MailNotify) => db().prepare("update mail_accounts set notify = ? where user_id = ?").run(notify, userId);
+
+/** Someone I have written to (in my Sent folder), or whose images I trust. */
+export function isKnownSender(userId: string, address: string): boolean {
+  const a = normal(address);
+  if (!a) return false;
+  if (isTrustedSender(userId, a)) return true;
+  const sent = specialFolder(userId, "\\Sent");
+  if (!sent) return false;
+  return !!db()
+    .prepare(
+      `select 1 from mail_messages m, json_each(m.recipients, '$.to') p
+       where m.user_id = ? and m.folder = ? and lower(json_extract(p.value, '$.address')) = ? limit 1`,
+    )
+    .get(userId, sent, a);
+}
+
+// ---- Push devices
+
+export function savePushDevice(userId: string, token: string, platform: string) {
+  db()
+    .prepare("insert into push_devices (token, user_id, platform, created_at, seen_at) values (?, ?, ?, ?, ?) on conflict (token) do update set user_id = excluded.user_id, platform = excluded.platform, seen_at = excluded.seen_at")
+    .run(token, userId, platform, now(), now());
+}
+
+export const removePushDevice = (token: string, userId?: string) =>
+  userId ? db().prepare("delete from push_devices where token = ? and user_id = ?").run(token, userId) : db().prepare("delete from push_devices where token = ?").run(token);
+
+export const pushDevices = (userId: string) => db().prepare("select token, platform from push_devices where user_id = ?").all(userId) as { token: string; platform: string }[];
 
 export const setSignature = (userId: string, signature: string) => db().prepare("update mail_accounts set signature = ? where user_id = ?").run(signature, userId);
 

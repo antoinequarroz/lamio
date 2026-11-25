@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button, Card, Field, inputClass } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import type { MailAccountInfo, MailFolder } from "@/lib/types";
+import type { MailAccountInfo, MailFolder, MailNotify } from "@/lib/types";
 import { api, cn } from "@/lib/utils";
 
 type State = { enabled: boolean; account: MailAccountInfo | null };
@@ -141,6 +141,7 @@ function MailStatusCard({ account, folders, onEdit, onChange }: { account: MailA
         </p>
       )}
       <SignatureField initial={account.signature} />
+      <NotifyField initial={account.notify} />
       <div className="flex flex-wrap gap-2">
         <Button onClick={sync} disabled={busy !== null}>
           <RefreshCw className={cn("size-4", busy === "sync" && "animate-spin")} />
@@ -176,6 +177,46 @@ function SignatureField({ initial }: { initial: string }) {
     <Field label="Signature" hint="Ajoutée sous chaque nouveau mail, réponse ou transfert.">
       <textarea value={value} onChange={(e) => setValue(e.target.value)} onBlur={() => void save()} rows={3} maxLength={2000} placeholder={"Antoine Quarroz\nPostmelo"} className={cn(inputClass, "h-auto resize-y py-2 leading-snug")} />
     </Field>
+  );
+}
+
+const NOTIFY: { value: MailNotify; label: string }[] = [
+  { value: "all", label: "Tous les mails" },
+  { value: "known", label: "Contacts connus" },
+  { value: "off", label: "Aucun" },
+];
+
+function NotifyField({ initial }: { initial: MailNotify }) {
+  const [value, setValue] = useState(initial);
+  const pick = async (next: MailNotify) => {
+    const before = value;
+    setValue(next);
+    try {
+      await api("/api/mail/notify", { method: "PUT", json: { notify: next } });
+    } catch (err) {
+      setValue(before);
+      toast.error((err as Error).message);
+    }
+  };
+  return (
+    // Not a <Field>: its <label> would pass every click inside to the first button.
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-medium text-ink-2">Notifier un nouveau mail</span>
+      <div role="radiogroup" aria-label="Notifier un nouveau mail" className="flex w-fit rounded-lg border border-line-strong p-0.5">
+        {NOTIFY.map((o) => (
+          <button
+            key={o.value}
+            role="radio"
+            aria-checked={value === o.value}
+            onClick={() => void pick(o.value)}
+            className={cn("press h-8 rounded-md px-3 text-[13px]", value === o.value ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-ink/[0.04]")}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <span className="text-[11.5px] text-ink-3">« Contacts connus » : seulement les personnes à qui tu as déjà écrit. Vaut pour ce navigateur, l&apos;app Mac et l&apos;iPhone.</span>
+    </div>
   );
 }
 

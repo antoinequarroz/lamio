@@ -208,3 +208,17 @@ Puis `cd ~/lamio/deploy && docker compose up -d --build`. Sans `MAIL_SECRET`, la
 - Ne change plus cette clé ensuite : les boîtes déjà branchées devraient être rebranchées (le mot de passe ne se déchiffre plus).
 - La sauvegarde de 3h15 contient la copie locale des mails (en-têtes et aperçus) et le mot de passe chiffré, jamais la clé.
 - Lamio refuse les serveurs du réseau privé (localhost, réseau Docker) et n'accepte que les ports 993/143 (IMAP) et 465/587 (SMTP).
+
+### Notifications push sur l'iPhone (facultatif)
+
+Pour qu'un nouveau mail arrive sur l'iPhone même app fermée, Lamio passe par les serveurs d'Apple (APNs). Il faut une clé du compte développeur Apple (Certificates, Identifiers & Profiles › Keys, case « Apple Push Notifications service »), téléchargée en `.p8`. Dans `~/lamio/.env` :
+
+```env
+APNS_KEY_FILE=/data/apns.p8      # ou APNS_KEY= le contenu du .p8, retours à la ligne en \n
+APNS_KEY_ID=<identifiant de la clé, 10 caractères>
+APNS_TEAM_ID=<identifiant de l'équipe Apple>
+APNS_TOPIC=<identifiant de l'app iPhone, son bundle id>
+APNS_SANDBOX=true                 # seulement pour une app lancée depuis Xcode, pas TestFlight
+```
+
+Sans ces réglages, rien n'est envoyé et rien d'autre ne change. L'app iPhone s'inscrit d'elle-même (`POST /api/push/devices`) ; un appareil qu'Apple refuse est oublié. Le choix « Tous les mails / Contacts connus / Aucun » de Réglages › Mails vaut aussi pour l'iPhone.

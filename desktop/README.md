@@ -25,5 +25,5 @@ LAMIO_URL=https://lamio.exemple.ch npm run build
 ## À savoir
 
 - L'app n'est pas signée par Apple. Sur ton Mac, celle que tu construis s'ouvre normalement. Sur le Mac de quelqu'un d'autre, il faut un clic droit puis « Ouvrir » la première fois, ou un compte développeur Apple pour la signer.
-- Les notifications de l'appareil ne passent pas encore dans cette app (la fenêtre n'a pas l'interface de notification des navigateurs). Les notifications dans l'app marchent.
+- Les notifications du Mac (un message, un nouveau mail) passent par le Centre de notifications, et le nombre de non-lus s'affiche sur l'icône du Dock. La première fois, macOS demande l'autorisation (Réglages › Notifications de Lamio).
 - L'icône se refait avec `npm run icons` à partir de `icon.png`.

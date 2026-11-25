@@ -4,6 +4,7 @@ import { imapClient, mailError, type MailSettings } from "./connect";
 import { decryptSecret, mailEnabled } from "./secret";
 import * as store from "./store";
 import { INBOX, InboxWatcher } from "./live";
+import { mailsToAlert, pushNewMails } from "./notify";
 import { syncMailbox } from "./sync";
 
 /*
@@ -96,7 +97,12 @@ function watcherFor(userId: string) {
       return settings ? imapClient(settings, { autoIdle: true }) : null;
     },
     {
-      onChange: (added) => publish({ type: "mail", status: "ok", folders: [INBOX], live: true, added: store.mailSummaries(userId, INBOX, added) }, [userId]),
+      onChange: (added) => {
+        const mails = store.mailSummaries(userId, INBOX, added);
+        const alert = mailsToAlert(userId, mails);
+        publish({ type: "mail", status: "ok", folders: [INBOX], live: true, added: mails, alert }, [userId]);
+        if (alert.length) void pushNewMails(userId, alert).catch(() => {});
+      },
       onState: (live, error) => {
         if (!store.mailAccount(userId)) return;
         if (error?.auth) store.setMailStatus(userId, "auth", error.message);

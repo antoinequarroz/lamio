@@ -83,7 +83,7 @@ export type ServerEvent =
   | { type: "message-deleted"; conversationId: string; id: number; parentId: number | null }
   | { type: "refresh" }
   /** My mailbox changed (new mails, flags, folders) or its connection status did. */
-  | { type: "mail"; status: MailStatus; folders: string[]; live?: boolean; added?: MailSummary[]; sent?: { id: string; error?: string } };
+  | { type: "mail"; status: MailStatus; folders: string[]; live?: boolean; added?: MailSummary[]; alert?: MailSummary[]; sent?: { id: string; error?: string } };
 
 // ---- Mails
 
@@ -102,9 +102,13 @@ export type MailAccountInfo = {
   syncedAt: string | null;
   /** Added under each new mail (plain text). */
   signature: string;
+  /** Which new mails notify: all, only from people I have written to, or none. */
+  notify: MailNotify;
   /** The permanent IMAP IDLE connection is open: new mails arrive within a second or two. */
   live: boolean;
 };
+
+export type MailNotify = "all" | "known" | "off";
 
 export type MailFolder = { path: string; name: string; delimiter: string; specialUse: string | null; total: number; unread: number };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { setAppBadge } from "./notifications";
 import type { AppState, Conversation, ServerEvent, User } from "./types";
 import { api, APP_NAME } from "./utils";
 
@@ -111,9 +112,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const unread = state?.conversations.reduce((n, c) => n + c.unread, 0) ?? 0;
+  const mailUnread = state?.mail?.unread ?? 0;
   useEffect(() => {
     document.title = unread ? `(${unread}) ${APP_NAME}` : APP_NAME;
   }, [unread]);
+  // The app's icon counts the unread messages and the unread mails of the inbox.
+  useEffect(() => setAppBadge(unread + mailUnread), [unread, mailUnread]);
 
   const store = useMemo<Store | null>(() => {
     if (!state) return null;

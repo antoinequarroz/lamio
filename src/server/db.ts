@@ -173,6 +173,14 @@ export function db() {
       created_at text not null,
       primary key (user_id, address)
     );
+    -- Phones (and later Macs) that get a push notification for a new mail, by their APNs token.
+    create table if not exists push_devices (
+      token text primary key,
+      user_id text not null references users (id) on delete cascade,
+      platform text not null,
+      created_at text not null,
+      seen_at text not null
+    );
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {
@@ -188,6 +196,8 @@ export function db() {
   addColumn("mail_messages", "body_text", "text");
   // Mails: the signature added under each new mail.
   addColumn("mail_accounts", "signature", "text not null default ''");
+  // Mails: which new mails notify (all, known = only people I have written to, off).
+  addColumn("mail_accounts", "notify", "text not null default 'all'");
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;

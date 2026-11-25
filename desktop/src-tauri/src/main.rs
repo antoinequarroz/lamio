@@ -6,7 +6,7 @@
 // Pour viser un autre serveur : LAMIO_URL=https://… npm run build
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{webview::NewWindowResponse, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{ipc::CapabilityBuilder, webview::NewWindowResponse, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
 const DEFAULT_URL: &str = "https://lamio.postmelo.ch";
 
@@ -38,10 +38,23 @@ fn open_in_browser(url: &Url) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Device notifications: the plugin gives the window the browser's Notification interface,
+        // so Lamio's own code (a message, a new mail) shows a real Mac notification.
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let home = home();
             let host = home.host_str().map(str::to_owned);
             let account = account_host();
+            // Lamio itself (and only Lamio) may notify and set the count on the Dock icon.
+            let mut site = home.clone();
+            site.set_path("/*");
+            app.add_capability(
+                CapabilityBuilder::new("lamio-site")
+                    .remote(site.to_string())
+                    .window("main")
+                    .permission("notification:default")
+                    .permission("core:window:allow-set-badge-count"),
+            )?;
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Lamio")
                 // Tells the waiting page which server to reach.
