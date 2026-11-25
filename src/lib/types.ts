@@ -74,4 +74,44 @@ export type ServerEvent =
   | { type: "message"; message: Message }
   | { type: "message-updated"; message: Message }
   | { type: "message-deleted"; conversationId: string; id: number; parentId: number | null }
-  | { type: "refresh" };
+  | { type: "refresh" }
+  /** My mailbox changed (new mails, flags, folders) or its connection status did. */
+  | { type: "mail"; status: MailStatus; folders: string[] };
+
+// ---- Mails
+
+/** pending: never synced yet. auth: the server refused the password, nothing is retried until it changes. */
+export type MailStatus = "pending" | "syncing" | "ok" | "error" | "auth";
+
+export type MailAccountInfo = {
+  email: string;
+  username: string;
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+  status: MailStatus;
+  lastError: string | null;
+  syncedAt: string | null;
+};
+
+export type MailFolder = { path: string; name: string; delimiter: string; specialUse: string | null; total: number; unread: number };
+
+export type MailAddress = { name: string; address: string };
+
+export type MailSummary = {
+  folder: string;
+  uid: number;
+  messageId: string | null;
+  subject: string;
+  from: MailAddress;
+  to: MailAddress[];
+  cc: MailAddress[];
+  date: string;
+  preview: string;
+  seen: boolean;
+  flagged: boolean;
+  answered: boolean;
+  attachments: boolean;
+  size: number;
+};

@@ -3,6 +3,7 @@
 import { Bell, BellOff, LogOut, Monitor, Moon, Sun } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { MailSettings } from "@/components/mail-settings";
 import { Avatar, Button, Card, Field, inputClass, PageHeader } from "@/components/ui";
 import { setNotifications, useNotificationState } from "@/lib/notifications";
 import { useApp } from "@/lib/store";
@@ -25,6 +26,7 @@ export default function SettingsPage() {
           <Profile />
           <Appearance />
           <Notifications />
+          <MailSettings />
           <Password />
           {me.role === "admin" && <Members />}
           <Session />

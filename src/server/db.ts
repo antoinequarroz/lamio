@@ -110,6 +110,62 @@ export function db() {
       user_id text not null references users (id) on delete cascade,
       primary key (module, user_id)
     );
+    -- Mails: the person's own mailbox (Infomaniak or any IMAP/SMTP server), one per account for now.
+    -- The password is encrypted with MAIL_SECRET (see server/mail/secret.ts), never stored in clear.
+    create table if not exists mail_accounts (
+      user_id text primary key references users (id) on delete cascade,
+      email text not null,
+      username text not null,
+      imap_host text not null,
+      imap_port integer not null,
+      smtp_host text not null,
+      smtp_port integer not null,
+      secret text not null,
+      -- pending, syncing, ok, error (will retry), auth (refused: waits for a new password)
+      status text not null default 'pending',
+      last_error text,
+      synced_at text,
+      created_at text not null
+    );
+    -- A local copy of the folders and message headers, so the list shows at once.
+    -- The mailbox on the server stays the reference: this cache can be dropped and rebuilt.
+    create table if not exists mail_folders (
+      user_id text not null references users (id) on delete cascade,
+      path text not null,
+      name text not null,
+      delimiter text not null default '/',
+      special_use text,
+      -- IMAP numbers, 64-bit: kept as text.
+      uid_validity text,
+      uid_next integer,
+      highest_modseq text,
+      total integer not null default 0,
+      unread integer not null default 0,
+      primary key (user_id, path)
+    );
+    create table if not exists mail_messages (
+      user_id text not null,
+      folder text not null,
+      uid integer not null,
+      message_id text,
+      in_reply_to text,
+      refs text,
+      subject text not null default '',
+      from_name text not null default '',
+      from_address text not null default '',
+      -- JSON: { to: [{ name, address }], cc: [...] }
+      recipients text not null default '{}',
+      date text not null,
+      preview text not null default '',
+      seen integer not null default 0,
+      flagged integer not null default 0,
+      answered integer not null default 0,
+      attachments integer not null default 0,
+      size integer not null default 0,
+      primary key (user_id, folder, uid),
+      foreign key (user_id, folder) references mail_folders (user_id, path) on delete cascade
+    );
+    create index if not exists mail_messages_date on mail_messages (user_id, folder, date desc);
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {

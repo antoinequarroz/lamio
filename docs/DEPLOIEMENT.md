@@ -192,3 +192,19 @@ cd deploy && docker compose up -d --build
 ```
 
 Les données sont dans le volume Docker `app-data`, elles ne bougent pas.
+
+## Mails (onglet Mails, en cours)
+
+Lamio peut se brancher sur la boîte mail de chacun (Infomaniak par défaut, ou tout serveur IMAP/SMTP), dans Réglages › Mails. Le mot de passe de la boîte est chiffré dans la base avec une clé qui reste dans le `.env`.
+
+Dans `~/lamio/.env` (faire d'abord une copie : `cp .env .env.bak-$(date +%F)`) :
+
+```env
+MAIL_SECRET=<openssl rand -base64 32>
+```
+
+Puis `cd ~/lamio/deploy && docker compose up -d --build`. Sans `MAIL_SECRET`, la section Mails affiche « pas encore activé » et rien d'autre ne change.
+
+- Ne change plus cette clé ensuite : les boîtes déjà branchées devraient être rebranchées (le mot de passe ne se déchiffre plus).
+- La sauvegarde de 3h15 contient la copie locale des mails (en-têtes et aperçus) et le mot de passe chiffré, jamais la clé.
+- Lamio refuse les serveurs du réseau privé (localhost, réseau Docker) et n'accepte que les ports 993/143 (IMAP) et 465/587 (SMTP).
