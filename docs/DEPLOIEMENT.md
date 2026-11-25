@@ -222,3 +222,13 @@ APNS_SANDBOX=true                 # seulement pour une app lancée depuis Xcode,
 ```
 
 Sans ces réglages, rien n'est envoyé et rien d'autre ne change. L'app iPhone s'inscrit d'elle-même (`POST /api/push/devices`) ; un appareil qu'Apple refuse est oublié. Le choix « Tous les mails / Contacts connus / Aucun » de Réglages › Mails vaut aussi pour l'iPhone.
+
+### Faire d'un mail un ticket TickUp (facultatif)
+
+Le bouton « Créer un ticket TickUp » (touche T) écrit dans TickUp avec la clé d'un agent. Dans TickUp, Réglages › Agents IA › « Créer la clé », avec le nom « Lamio ». Puis, dans `~/lamio/.env`, à côté de `TICKUP_URL` :
+
+```env
+TICKUP_TOKEN=tku_…
+```
+
+Sans cette clé, la fenêtre explique comment la brancher et rien d'autre ne change. Les tickets portent le nom « Lamio » dans TickUp ; la clé se révoque depuis TickUp. « Partager dans Lamio » (touche L) n'a besoin d'aucun réglage.

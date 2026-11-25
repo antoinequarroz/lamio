@@ -1,12 +1,13 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MessagesSquare, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
+import { ShareDialog, TicketDialog } from "@/components/mail/gateways";
 import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
 import { ResizeHandle } from "@/components/resize-handle";
 import { Avatar, Button, Card, Kbd } from "@/components/ui";
@@ -1079,6 +1080,7 @@ function Reader({
   const [mail, setMail] = useState<MailContent | null>(null);
   const [error, setError] = useState("");
   const [members, setMembers] = useState<MailSummary[]>([]);
+  const [gateway, setGateway] = useState<"share" | "ticket" | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -1135,7 +1137,7 @@ function Reader({
 
   // r / a / f: reply, reply to all, forward. e: archive, #: trash, u: unread, s: flag, v: move, !: spam.
   useEffect(() => {
-    if (!mail || busy) return;
+    if (!mail || busy || gateway) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
@@ -1150,11 +1152,14 @@ function Reader({
       } else if (e.key === "v") {
         e.preventDefault();
         move();
+      } else if (e.key === "l" || e.key === "t") {
+        e.preventDefault();
+        setGateway(e.key === "l" ? "share" : "ticket");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mail, busy, me, onCompose, run, move, trash, junk, isDrafts]);
+  }, [mail, busy, gateway, me, onCompose, run, move, trash, junk, isDrafts]);
 
   const back = (
     <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
@@ -1193,9 +1198,9 @@ function Reader({
         ) : (
           <Action label={`Corbeille${n ? ` :${n}` : ""} (#)`} Icon={Trash2} onClick={() => run({ type: "trash" })} />
         )}
-        {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} />}
+        {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} className="max-sm:hidden" /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} className="max-sm:hidden" />}
         <Action label={`Déplacer${n} (V)`} Icon={FolderInput} onClick={move} />
-        <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} />
+        <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} className="max-sm:hidden" />
         <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
         <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
         {isDrafts ? (
@@ -1209,7 +1214,20 @@ function Reader({
             <Action label="Transférer (F)" Icon={Forward} onClick={() => onCompose(composeFrom(mail, "forward", me))} />
           </>
         )}
+        <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
+        <Action label="Partager dans Lamio (L)" Icon={MessageSquareShare} onClick={() => setGateway("share")} className="max-sm:hidden" />
+        <Action label="Créer un ticket TickUp (T)" Icon={TicketPlus} onClick={() => setGateway("ticket")} className="max-sm:hidden" />
+        <MoreActions
+          items={[
+            junk ? { label: "Pas un spam", Icon: ShieldCheck, onClick: () => run({ type: "move", to: "INBOX" }) } : { label: "Spam", Icon: ShieldAlert, onClick: () => run({ type: "spam" }) },
+            { label: "Marquer comme non lu", Icon: MailOpen, onClick: () => run({ type: "seen", value: false }) },
+            { label: "Partager dans Lamio", Icon: MessageSquareShare, onClick: () => setGateway("share") },
+            { label: "Créer un ticket TickUp", Icon: TicketPlus, onClick: () => setGateway("ticket") },
+          ]}
+        />
       </header>
+      {gateway === "share" && <ShareDialog mail={mail} onClose={() => setGateway(null)} />}
+      {gateway === "ticket" && <TicketDialog mail={mail} onClose={() => setGateway(null)} />}
       <div className="scroll-thin flex-1 overflow-y-auto px-6 py-6 max-md:px-4">
         <div className="mx-auto max-w-[720px]">
           <h2 className="text-[22px] leading-tight font-semibold tracking-[-0.01em]">{mail.subject || "(sans objet)"}</h2>
@@ -1403,9 +1421,51 @@ function MailBody({ mail, onChange }: { mail: MailContent; onChange: (mail: Mail
   );
 }
 
-function Action({ label, Icon, onClick, active, small }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean; small?: boolean }) {
+/** On a phone, the less used actions of a mail live behind "…". */
+function MoreActions({ items }: { items: { label: string; Icon: typeof Reply; onClick: () => void }[] }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof PointerEvent && (e.target as HTMLElement).closest("[data-more-actions]")) return;
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [open]);
   return (
-    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex shrink-0 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", small ? "size-7" : "size-8", active ? "text-accent" : "text-ink-3")}>
+    <div data-more-actions className="relative sm:hidden">
+      <Action label="Plus d'actions" Icon={MoreHorizontal} onClick={() => setOpen((o) => !o)} active={open} />
+      {open && (
+        <div role="menu" className="absolute top-9 right-0 z-30 w-[220px] rounded-xl border border-line-strong bg-surface p-1 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.35)]">
+          {items.map(({ label, Icon, onClick }) => (
+            <button
+              key={label}
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onClick();
+              }}
+              className="press flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] hover:bg-ink/[0.04]"
+            >
+              <Icon className="size-4 text-ink-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Action({ label, Icon, onClick, active, small, className }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean; small?: boolean; className?: string }) {
+  return (
+    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex shrink-0 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", small ? "size-7" : "size-8", active ? "text-accent" : "text-ink-3", className)}>
       <Icon className="size-4" />
     </button>
   );
@@ -1436,6 +1496,13 @@ const SHORTCUTS: { title: string; keys: [string[], string][] }[] = [
       [["A"], "Répondre à tous"],
       [["F"], "Transférer"],
       [["⌘", "Entrée"], "Envoyer"],
+    ],
+  },
+  {
+    title: "Avec Lamio et TickUp",
+    keys: [
+      [["L"], "Partager dans une conversation"],
+      [["T"], "Créer un ticket TickUp"],
     ],
   },
   {
