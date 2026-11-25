@@ -516,6 +516,7 @@ export function MailView() {
   if (!account.enabled || !account.account) return <NoMailbox enabled={account.enabled} />;
 
   const info = account.account;
+  const mine = info.identities?.length ? info.identities.map((i) => i.address) : [info.email];
   return (
     <div className="flex min-h-0 flex-1">
       {/* Folders */}
@@ -654,7 +655,7 @@ export function MailView() {
             key={`${folder}|${openUid}`}
             folder={folder}
             uid={openUid}
-            me={info.email}
+            me={mine}
             isDrafts={current?.specialUse === "\\Drafts"}
             trash={isTrash || isJunk}
             junk={isJunk}
@@ -682,7 +683,7 @@ export function MailView() {
         />
       )}
       {help && <ShortcutsHelp onClose={() => setHelp(false)} />}
-      {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} signature={info.signature} onClose={() => setCompose(null)} onSent={sent} onScheduled={scheduled} />}
+      {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} identities={info.identities ?? []} onClose={() => setCompose(null)} onSent={sent} onScheduled={scheduled} />}
       {laterOpen && <LaterPanel items={later} onClose={() => setLaterOpen(false)} onChanged={loadLater} />}
     </div>
   );
@@ -1131,7 +1132,8 @@ function Reader({
   sent: boolean;
   folder: string;
   uid: number;
-  me: string;
+  /** My addresses, the mailbox's own first. */
+  me: string[];
   isDrafts: boolean;
   /** In the Trash or the Spam: deleting is for good. */
   trash: boolean;
@@ -1547,11 +1549,11 @@ function MailHead({ mail, date }: { mail: Pick<MailSummary, "from" | "to" | "cc"
 }
 
 /** Another mail of the conversation: one line, opened on a click (read from the copy or the server). */
-function ThreadItem({ summary, me }: { summary: MailSummary; me: string }) {
+function ThreadItem({ summary, me }: { summary: MailSummary; me: string[] }) {
   const [open, setOpen] = useState(false);
   const [mail, setMail] = useState<MailContent | null>(null);
   const [error, setError] = useState("");
-  const mine = summary.from.address.toLowerCase() === me.toLowerCase();
+  const mine = me.some((a) => a.toLowerCase() === summary.from.address.toLowerCase());
 
   useEffect(() => {
     if (!open || mail) return;

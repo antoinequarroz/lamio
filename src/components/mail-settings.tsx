@@ -1,11 +1,11 @@
 "use client";
 
-import { CheckCircle2, ChevronDown, Loader2, Mail, RefreshCw, TriangleAlert, Unplug, Zap } from "lucide-react";
+import { AtSign, CheckCircle2, ChevronDown, Loader2, Mail, Plus, RefreshCw, Trash2, TriangleAlert, Unplug, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button, Card, Field, inputClass } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import type { MailAccountInfo, MailFolder, MailNotify } from "@/lib/types";
+import type { MailAccountInfo, MailFolder, MailIdentity, MailNotify } from "@/lib/types";
 import { api, cn } from "@/lib/utils";
 
 type State = { enabled: boolean; account: MailAccountInfo | null };
@@ -141,6 +141,7 @@ function MailStatusCard({ account, folders, onEdit, onChange }: { account: MailA
         </p>
       )}
       <SignatureField initial={account.signature} />
+      <IdentitiesField account={account} />
       <NotifyField initial={account.notify} />
       <div className="flex flex-wrap gap-2">
         <Button onClick={sync} disabled={busy !== null}>
@@ -177,6 +178,69 @@ function SignatureField({ initial }: { initial: string }) {
     <Field label="Signature" hint="Ajoutée sous chaque nouveau mail, réponse ou transfert.">
       <textarea value={value} onChange={(e) => setValue(e.target.value)} onBlur={() => void save()} rows={3} maxLength={2000} placeholder={"Antoine Quarroz\nPostmelo"} className={cn(inputClass, "h-auto resize-y py-2 leading-snug")} />
     </Field>
+  );
+}
+
+type Extra = Pick<MailIdentity, "address" | "name" | "signature">;
+
+/**
+ * Other addresses this mailbox receives (aliases): I can send from each, with its own name and
+ * signature, and an answer leaves from the address the mail was sent to.
+ */
+function IdentitiesField({ account }: { account: MailAccountInfo }) {
+  const initial = (account.identities ?? []).filter((i) => !i.primary).map(({ address, name, signature }) => ({ address, name, signature }));
+  const [list, setList] = useState<Extra[]>(initial);
+  const [saved, setSaved] = useState(JSON.stringify(initial));
+  const [busy, setBusy] = useState(false);
+  const dirty = JSON.stringify(list) !== saved;
+  const edit = (n: number, patch: Partial<Extra>) => setList(list.map((x, i) => (i === n ? { ...x, ...patch } : x)));
+  const save = async () => {
+    setBusy(true);
+    try {
+      const clean = list.filter((x) => x.address.trim());
+      const r = await api<{ account: MailAccountInfo }>("/api/mail/identities", { method: "PUT", json: { identities: clean } });
+      const next = r.account.identities.filter((i) => !i.primary).map(({ address, name, signature }) => ({ address, name, signature }));
+      setList(next);
+      setSaved(JSON.stringify(next));
+      toast("Adresses d'envoi enregistrées");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    // Not a Field (a <label>): it holds several inputs and buttons.
+    <div role="group" aria-labelledby="mail-identities" className="flex flex-col gap-1.5">
+      <span id="mail-identities" className="text-[12px] font-medium text-ink-2">Autres adresses d&apos;envoi</span>
+      <div className="flex flex-col gap-2">
+        {list.map((x, n) => (
+          <div key={n} className="flex flex-col gap-1.5 rounded-lg border border-line p-2">
+            <div className="flex flex-wrap gap-1.5">
+              <input value={x.address} onChange={(e) => edit(n, { address: e.target.value })} placeholder="contact@postmelo.ch" aria-label="Adresse" type="email" className={cn(inputClass, "w-auto min-w-[170px] flex-[3] basis-0")} />
+              <input value={x.name} onChange={(e) => edit(n, { name: e.target.value })} placeholder="Nom affiché (facultatif)" aria-label="Nom affiché" className={cn(inputClass, "w-auto min-w-[130px] flex-[2] basis-0 max-sm:order-last max-sm:basis-full")} />
+              <button onClick={() => setList(list.filter((_, i) => i !== n))} aria-label="Retirer cette adresse" title="Retirer" className="press flex size-9 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+                <Trash2 className="size-4" />
+              </button>
+            </div>
+            <textarea value={x.signature} onChange={(e) => edit(n, { signature: e.target.value })} rows={2} maxLength={2000} placeholder="Signature de cette adresse" aria-label="Signature de cette adresse" className={cn(inputClass, "h-auto resize-y py-2 leading-snug")} />
+          </div>
+        ))}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setList([...list, { address: "", name: "", signature: "" }])} disabled={list.length >= 20}>
+            {list.length ? <Plus className="size-4" /> : <AtSign className="size-4" />}
+            Ajouter une adresse
+          </Button>
+          {dirty && (
+            <Button variant="primary" onClick={() => void save()} disabled={busy}>
+              {busy && <Loader2 className="size-4 animate-spin" />}
+              Enregistrer
+            </Button>
+          )}
+        </div>
+      </div>
+      <span className="text-[11.5px] text-ink-3">Des alias qui arrivent dans cette boîte : tu peux écrire depuis chacun, avec sa signature, et une réponse part de l&apos;adresse qui a reçu le mail. Le serveur d&apos;envoi doit les accepter (chez Infomaniak : alias de l&apos;adresse).</span>
+    </div>
   );
 }
 

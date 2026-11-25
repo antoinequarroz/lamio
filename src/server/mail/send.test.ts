@@ -116,6 +116,20 @@ describe("écrire un mail", () => {
     expect(cancelSend(userId, id)).toBe(false);
   });
 
+  it("part de l'adresse choisie, avec sa signature ; une adresse inconnue retombe sur la boîte", async () => {
+    store.setIdentities(userId, [{ address: "Contact@Postmelo.ch", name: "Postmelo", signature: "L'équipe Postmelo" }]);
+    expect(store.mailAccountInfo(userId)!.identities.map((i) => [i.address, i.primary])).toEqual([["antoine@exemple.ch", true], ["contact@postmelo.ch", false]]);
+    const out = await prepare(userId, "Antoine", { ...base, subject: "Salut", html: "<p>x</p>", from: "contact@postmelo.ch" }, [], deps);
+    expect(out.from).toEqual({ name: "Postmelo", address: "contact@postmelo.ch" });
+    expect(out.tail).toContain("L'équipe Postmelo");
+    expect(out.tail).not.toContain("Antoine Quarroz");
+    await deliver(userId, base, out, deps);
+    expect(sent[0].envelope.from).toBe("contact@postmelo.ch");
+    const other = await prepare(userId, "Antoine", { ...base, from: "pirate@ailleurs.ch" }, [], deps);
+    expect(other.from).toEqual({ name: "Antoine", address: "antoine@exemple.ch" });
+    expect(other.tail).toContain("Antoine Quarroz");
+  });
+
   it("propose les adresses déjà vues", async () => {
     expect(store.mailContacts(userId, "agence")).toEqual(expect.arrayContaining([{ name: "Léa Martin", address: "lea@agence.ch" }, { name: "Paul", address: "paul@agence.ch" }]));
     expect(store.mailContacts(userId, "léa")[0].address).toBe("lea@agence.ch");

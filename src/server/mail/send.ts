@@ -37,6 +37,8 @@ export type Draft = {
   keep?: { folder: string; uid: number; parts: string[] } | null;
   /** The draft this mail comes from: removed from Drafts once sent. */
   draft?: { folder: string; uid: number } | null;
+  /** The address it leaves from (one of my identities); missing: the mailbox's own. */
+  from?: string | null;
 };
 
 type Deps = {
@@ -57,10 +59,10 @@ const defaults: Deps = {
 
 /** The full mail: what was written, the signature, the quote or the forwarded mail, the files. */
 export async function prepare(userId: string, fromName: string, draft: Draft, files: OutFile[], deps: Deps = defaults, withSignature = true): Promise<Outgoing> {
-  const account = store.mailAccountInfo(userId);
-  if (!account) throw new MailProblem("Aucune boîte mail branchée");
+  const identity = store.identityFor(userId, draft.from);
+  if (!identity) throw new MailProblem("Aucune boîte mail branchée");
   const out: Outgoing = {
-    from: { name: fromName, address: account.email },
+    from: { name: identity.name || fromName, address: identity.address },
     to: draft.to,
     cc: draft.cc,
     bcc: draft.bcc,
@@ -68,7 +70,7 @@ export async function prepare(userId: string, fromName: string, draft: Draft, fi
     html: draft.html,
     files: [...files],
   };
-  let tail = draft.mode === "draft" || !withSignature ? "" : signatureHtml(account.signature);
+  let tail = draft.mode === "draft" || !withSignature ? "" : signatureHtml(identity.signature);
 
   if (draft.ref && (draft.mode === "reply" || draft.mode === "replyAll" || draft.mode === "forward")) {
     const original = await openMail(userId, draft.ref.folder, draft.ref.uid, deps.imap);

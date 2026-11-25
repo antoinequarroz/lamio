@@ -168,6 +168,17 @@ export type MailAccountInfo = {
   notify: MailNotify;
   /** The permanent IMAP IDLE connection is open: new mails arrive within a second or two. */
   live: boolean;
+  /** The addresses I send from, the mailbox's own first (its signature is `signature`). */
+  identities: MailIdentity[];
+};
+
+/** An address I send from: the mailbox's own, or an alias delivered into it. */
+export type MailIdentity = {
+  address: string;
+  /** The name shown to the recipient; empty: my Lamio name. */
+  name: string;
+  signature: string;
+  primary: boolean;
 };
 
 export type MailNotify = "all" | "important" | "known" | "off";

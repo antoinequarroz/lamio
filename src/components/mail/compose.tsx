@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { useStored } from "@/lib/use-stored";
 import { toast } from "sonner";
 import { REMOTE_SRC } from "@/lib/mail-frame";
-import type { ComposeMode, MailAddress, MailAttachment, MailContent } from "@/lib/types";
+import type { ComposeMode, MailAddress, MailAttachment, MailContent, MailIdentity } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 import { WhenMenu } from "./when-menu";
 
@@ -27,6 +27,8 @@ export type ComposeInit = {
   unsaved?: boolean;
   /** The mail quoted or forwarded, shown under the editor (the server adds it). */
   original?: { from: MailAddress; preview: string } | null;
+  /** The address it leaves from; missing: the mailbox's own. */
+  from?: string | null;
 };
 
 const EMAIL = /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;]+$/;
@@ -43,19 +45,24 @@ function parseAddress(text: string): MailAddress | null {
   return EMAIL.test(address) ? { name: m ? m[1].trim() : "", address } : null;
 }
 
-/** The compose window's start, for an answer, a forward or a draft taken up again. */
-export function composeFrom(mail: MailContent, mode: ComposeMode, me: string): ComposeInit {
-  const self = [{ name: "", address: me }];
+/**
+ * The compose window's start, for an answer, a forward or a draft taken up again. `mine` are my
+ * addresses (the mailbox's own first): an answer leaves from the one the mail was sent to.
+ */
+export function composeFrom(mail: MailContent, mode: ComposeMode, mine: string[]): ComposeInit {
+  const self = mine.map((address) => ({ name: "", address }));
+  const isMine = (a: MailAddress) => self.some((s) => sameAddress(s, a));
   const ref = { folder: mail.folder, uid: mail.uid };
   const original = { from: mail.from, preview: mail.text.slice(0, 180) };
-  if (mode === "reply") return { mode, to: dedupe([mail.from], self).length ? [mail.from] : mail.to, cc: [], bcc: [], subject: replySubject(mail.subject), html: "", ref, original };
+  const from = (isMine(mail.from) ? mail.from : [...mail.to, ...mail.cc].find(isMine))?.address.toLowerCase() ?? null;
+  if (mode === "reply") return { mode, to: dedupe([mail.from], self).length ? [mail.from] : mail.to, cc: [], bcc: [], subject: replySubject(mail.subject), html: "", ref, original, from };
   if (mode === "replyAll") {
     const to = dedupe([mail.from, ...mail.to], self);
-    return { mode, to, cc: dedupe(mail.cc, [...self, ...to]), bcc: [], subject: replySubject(mail.subject), html: "", ref, original };
+    return { mode, to, cc: dedupe(mail.cc, [...self, ...to]), bcc: [], subject: replySubject(mail.subject), html: "", ref, original, from };
   }
-  if (mode === "forward") return { mode, to: [], cc: [], bcc: [], subject: replySubject(mail.subject, true), html: "", ref, original, keep: mail.attachmentList.length ? { ...ref, files: mail.attachmentList } : null };
+  if (mode === "forward") return { mode, to: [], cc: [], bcc: [], subject: replySubject(mail.subject, true), html: "", ref, original, from, keep: mail.attachmentList.length ? { ...ref, files: mail.attachmentList } : null };
   // A draft: everything it holds goes back into the window.
-  return { mode: "draft", to: mail.to, cc: mail.cc, bcc: [], subject: mail.subject, html: editableHtml(mail.html ?? textToHtml(mail.text)), draft: ref, keep: mail.attachmentList.length ? { ...ref, files: mail.attachmentList } : null };
+  return { mode: "draft", to: mail.to, cc: mail.cc, bcc: [], subject: mail.subject, html: editableHtml(mail.html ?? textToHtml(mail.text)), draft: ref, from: isMine(mail.from) ? mail.from.address.toLowerCase() : null, keep: mail.attachmentList.length ? { ...ref, files: mail.attachmentList } : null };
 }
 
 function replySubject(subject: string, forward = false) {
@@ -92,12 +99,14 @@ export type SendState = ComposeInit;
 
 type ComposeSize = "normal" | "large" | "full";
 
-export function Compose({ init, signature, onClose, onSent, onScheduled }: { init: ComposeInit; signature: string; onClose: () => void; onSent: (id: string, undoMs: number, state: SendState) => void; onScheduled: (id: string, due: string, state: SendState) => void }) {
+export function Compose({ init, identities, onClose, onSent, onScheduled }: { init: ComposeInit; identities: MailIdentity[]; onClose: () => void; onSent: (id: string, undoMs: number, state: SendState) => void; onScheduled: (id: string, due: string, state: SendState) => void }) {
   const [to, setTo] = useState(init.to);
   const [cc, setCc] = useState(init.cc);
   const [bcc, setBcc] = useState(init.bcc);
   const [showCc, setShowCc] = useState(init.cc.length > 0 || init.bcc.length > 0);
   const [subject, setSubject] = useState(init.subject);
+  const [from, setFrom] = useState(() => (identities.find((i) => i.address.toLowerCase() === init.from?.toLowerCase()) ?? identities[0])?.address ?? "");
+  const signature = identities.find((i) => i.address === from)?.signature ?? "";
   const [files, setFiles] = useState<File[]>(init.files ?? []);
   const [kept, setKept] = useState<MailAttachment[]>(init.keep?.files ?? []);
   const [draft, setDraft] = useState(init.draft ?? null);
@@ -123,15 +132,15 @@ export function Compose({ init, signature, onClose, onSent, onScheduled }: { ini
   }, [init]);
 
   const state = useCallback(
-    (): SendState => ({ ...init, to, cc, bcc, subject, html: editor.current?.innerHTML ?? "", files, keep: init.keep && kept.length ? { ...init.keep, files: kept } : null, draft }),
-    [init, to, cc, bcc, subject, files, kept, draft],
+    (): SendState => ({ ...init, to, cc, bcc, subject, html: editor.current?.innerHTML ?? "", files, keep: init.keep && kept.length ? { ...init.keep, files: kept } : null, draft, from }),
+    [init, to, cc, bcc, subject, files, kept, draft, from],
   );
 
   const form = useCallback((s: SendState) => {
     const f = new FormData();
     f.set(
       "mail",
-      JSON.stringify({ to: s.to, cc: s.cc, bcc: s.bcc, subject: s.subject, html: s.html, mode: s.mode, ref: s.ref ?? null, draft: s.draft ?? null, keep: s.keep ? { folder: s.keep.folder, uid: s.keep.uid, parts: s.keep.files.map((k) => k.part) } : null }),
+      JSON.stringify({ to: s.to, cc: s.cc, bcc: s.bcc, subject: s.subject, html: s.html, mode: s.mode, from: s.from ?? null, ref: s.ref ?? null, draft: s.draft ?? null, keep: s.keep ? { folder: s.keep.folder, uid: s.keep.uid, parts: s.keep.files.map((k) => k.part) } : null }),
     );
     (s.files ?? []).forEach((file) => f.append("files", file));
     return f;
@@ -176,7 +185,7 @@ export function Compose({ init, signature, onClose, onSent, onScheduled }: { ini
       return;
     }
     changed();
-  }, [to, cc, bcc, subject, files, kept, changed]);
+  }, [to, cc, bcc, subject, files, kept, from, changed]);
 
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
 
@@ -324,6 +333,18 @@ export function Compose({ init, signature, onClose, onSent, onScheduled }: { ini
       </header>
 
       <div className="flex flex-col border-b border-line text-[13.5px]">
+        {identities.length > 1 && (
+          <label className="flex items-center gap-3 border-b border-line px-4">
+            <span className="w-8 shrink-0 text-ink-3">De</span>
+            <select value={from} onChange={(e) => setFrom(e.target.value)} aria-label="De" className="h-10 min-w-0 flex-1 cursor-pointer truncate bg-transparent outline-none">
+              {identities.map((i) => (
+                <option key={i.address} value={i.address}>
+                  {i.name ? `${i.name} <${i.address}>` : i.address}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <AddressField label="À" value={to} onChange={setTo} autoFocus={init.mode === "new" || init.mode === "forward"}>
           {!showCc && (
             <button onClick={() => setShowCc(true)} className="press shrink-0 px-1 text-[12.5px] text-ink-3 hover:text-ink">

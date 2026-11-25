@@ -51,7 +51,7 @@ export async function parseDraft(form: FormData, { requireRecipient }: { require
     files.push({ name: f.name.slice(0, 255) || "fichier", type: f.type || "application/octet-stream", data: Buffer.from(await f.arrayBuffer()) });
   }
   return {
-    draft: { to, cc, bcc, subject, html, mode, ref: ref(raw.ref), keep: keepRef && parts.length ? { ...keepRef, parts } : null, draft: ref(raw.draft) },
+    draft: { to, cc, bcc, subject, html, mode, ref: ref(raw.ref), keep: keepRef && parts.length ? { ...keepRef, parts } : null, draft: ref(raw.draft), from: typeof raw.from === "string" && EMAIL.test(raw.from.trim()) ? raw.from.trim() : null },
     files,
   };
 }

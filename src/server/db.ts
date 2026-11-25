@@ -225,6 +225,16 @@ export function db() {
     created_at text not null,
     primary key (user_id, address)
   )`);
+  // Mails: other addresses I send from with the same mailbox (aliases), each with its signature.
+  conn.exec(`create table if not exists mail_identities (
+    user_id text not null references users (id) on delete cascade,
+    address text not null,
+    name text not null default '',
+    signature text not null default '',
+    position integer not null default 0,
+    created_at text not null,
+    primary key (user_id, address)
+  )`);
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;

@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/server/db";
-import type { MailAccountInfo, MailAttachment, MailAddress, MailCategory, MailFolder, MailNotify, MailStatus, MailSummary } from "@/lib/types";
+import type { MailAccountInfo, MailAttachment, MailIdentity, MailAddress, MailCategory, MailFolder, MailNotify, MailStatus, MailSummary } from "@/lib/types";
 import type { MailKind, Unsubscribe } from "./sort";
 
 const now = () => new Date().toISOString();
@@ -39,7 +39,30 @@ const toInfo = (r: AccountRow): MailAccountInfo => ({
   notify: r.notify === "known" || r.notify === "off" || r.notify === "important" ? r.notify : "all",
   // Known by the mail service only: the routes fill it in.
   live: false,
+  identities: [{ address: r.email, name: "", signature: r.signature ?? "", primary: true }, ...extraIdentities(r.user_id).filter((i) => i.address.toLowerCase() !== r.email.toLowerCase())],
 });
+
+type IdentityRow = { address: string; name: string; signature: string };
+
+const extraIdentities = (userId: string): MailIdentity[] =>
+  (db().prepare("select address, name, signature from mail_identities where user_id = ? order by position, created_at").all(userId) as IdentityRow[]).map((r) => ({ ...r, primary: false }));
+
+/** Replaces the other addresses I send from (the mailbox's own stays, with its signature). */
+export function setIdentities(userId: string, list: { address: string; name: string; signature: string }[]) {
+  const now = new Date().toISOString();
+  db().transaction(() => {
+    db().prepare("delete from mail_identities where user_id = ?").run(userId);
+    const insert = db().prepare("insert or ignore into mail_identities (user_id, address, name, signature, position, created_at) values (?, ?, ?, ?, ?, ?)");
+    list.forEach((i, n) => insert.run(userId, i.address.toLowerCase(), i.name, i.signature, n, now));
+  })();
+}
+
+/** The identity to send from: the one with this address, else the mailbox's own. */
+export function identityFor(userId: string, address: string | null | undefined): MailIdentity | null {
+  const ids = mailAccountInfo(userId)?.identities ?? [];
+  const a = (address ?? "").toLowerCase();
+  return ids.find((i) => a && i.address.toLowerCase() === a) ?? ids[0] ?? null;
+}
 
 const accountRow = (userId: string) => db().prepare("select * from mail_accounts where user_id = ?").get(userId) as AccountRow | undefined;
 
