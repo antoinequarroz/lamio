@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alfredConfig, AlfredError, createEvent, deleteEvent, parseEventInput, readCalendar } from "./alfred";
+import { alfredConfig, AlfredError, callPass, callsConfigured, createCallRoom, createEvent, deleteEvent, parseEventInput, readCalendar } from "./alfred";
 
 const TOKEN = "alfw_" + "x".repeat(43);
 const ENV = { ALFRED_URL: "https://alfred.exemple.ch/", ALFRED_API_TOKEN: TOKEN };
@@ -81,5 +81,24 @@ describe("Alfred : écriture", () => {
     expect(parseEventInput({ ...base, allDay: true, start: "2026-11-25", end: "2026-11-26" })).toMatchObject({ allDay: true, start: "2026-11-25", end: "2026-11-26" });
     expect(parseEventInput({ ...base, allDay: true, start: "2026-11-25", end: "2026-11-25" })).toBeNull();
     expect(parseEventInput(null)).toBeNull();
+  });
+});
+
+describe("Alfred : appels", () => {
+  it("crée la salle et demande l'entrée d'une personne, sur l'adresse publique d'Alfred seulement", async () => {
+    expect(callsConfigured(ENV)).toBe(true);
+    expect(callsConfigured({ ...ENV, ALFRED_API_TOKEN: "alf_" + "y".repeat(43) })).toBe(false);
+    const { fetcher, calls } = fakeFetch({
+      "POST /api/v1/video/rooms": { status: 201, body: { id: "r1", slug: "abcd-efgh-2345", title: "#general", url: "https://alfred.exemple.ch/v/abcd-efgh-2345" } },
+      "POST /api/v1/video/rooms/abcd-efgh-2345/passes": { status: 201, body: { url: "https://alfred.exemple.ch/v/abcd-efgh-2345?pass=xyz", expiresAt: "" } },
+    });
+    expect(await createCallRoom("#general", fetcher, ENV)).toEqual({ slug: "abcd-efgh-2345", title: "#general" });
+    expect(await callPass("abcd-efgh-2345", "Léa", fetcher, ENV)).toEqual({ url: "https://alfred.exemple.ch/v/abcd-efgh-2345?pass=xyz" });
+    expect(JSON.parse(calls[1].init.body as string)).toEqual({ name: "Léa" });
+
+    const elsewhere = fakeFetch({ "POST /api/v1/video/rooms/abcd-efgh-2345/passes": { status: 201, body: { url: "https://ailleurs.example/v/x" } } });
+    await expect(callPass("abcd-efgh-2345", "Léa", elsewhere.fetcher, ENV)).rejects.toMatchObject({ status: 502 });
+    const off = fakeFetch({ "POST /api/v1/video/rooms": { status: 503, body: { error: "Le serveur de visio n'est pas encore installé." } } });
+    await expect(createCallRoom("x", off.fetcher, ENV)).rejects.toMatchObject({ status: 502, message: "Le serveur de visio n'est pas encore installé." });
   });
 });

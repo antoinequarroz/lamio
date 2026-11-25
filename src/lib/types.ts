@@ -22,7 +22,15 @@ export type Message = {
   reactions: Reaction[];
   /** The people this message mentions (@Name, or everybody with @tous). */
   mentionIds: string[];
+  /** A video call started here: the message is its card. */
+  call: CallInfo | null;
 };
+
+/** A video call of a conversation. Its room lives in Alfred (the engine stays there). */
+export type CallInfo = { slug: string; title: string };
+
+/** What a call card shows, read from Alfred. */
+export type CallStatus = { status: "open" | "ended" | "closed" | "unavailable" | string; live: number | null };
 
 export type Conversation = {
   id: string;
@@ -76,6 +84,8 @@ export type AppState = {
   modules: ModuleInfo[];
   /** The Calendrier tab (Alfred's calendar): whether I see it. */
   calendar: boolean;
+  /** Video calls in conversations (through Alfred's video): whether they are plugged in. */
+  calls: boolean;
 };
 
 export type CalendarSource = "local" | "caldav";

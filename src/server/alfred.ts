@@ -157,3 +157,33 @@ export function parseEventInput(value: unknown): EventInput | null {
   if (allDay ? !DATE.test(start) || !DATE.test(end) || end <= start : Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end)) || Date.parse(end) < Date.parse(start)) return null;
   return { calendarId, title, start: allDay ? start : new Date(start).toISOString(), end: allDay ? end : new Date(end).toISOString(), allDay, location, description, repeat };
 }
+
+// ---- Video calls (ALFRED-313): the room is Alfred's, Lamio shows it in its call window.
+
+const SLUG = /^[a-z0-9-]{6,64}$/;
+export const validSlug = (slug: string) => SLUG.test(slug);
+
+/** Calls work with a token that may write (creating a room is a write). */
+export const callsConfigured = (env: Record<string, string | undefined> = process.env) => !!alfredConfig(env)?.writable;
+
+export async function createCallRoom(title: string, fetcher: Fetcher = fetch, env: Record<string, string | undefined> = process.env) {
+  const room = await call<{ slug: string; title: string }>("/api/v1/video/rooms", fetcher, env, "POST", { title: title.slice(0, 120) });
+  if (!room || typeof room.slug !== "string" || !validSlug(room.slug)) throw new AlfredError("Réponse d'Alfred illisible", 502);
+  return { slug: room.slug, title: typeof room.title === "string" ? room.title : title };
+}
+
+export async function callStatus(slug: string, fetcher: Fetcher = fetch, env: Record<string, string | undefined> = process.env) {
+  const r = await call<{ status: string; live: number | null }>(`/api/v1/video/rooms/${encodeURIComponent(slug)}`, fetcher, env);
+  return { status: typeof r.status === "string" ? r.status : "unavailable", live: typeof r.live === "number" ? r.live : null };
+}
+
+/**
+ * The address of the call for one person, in Alfred's room page, entering without waiting room.
+ * It must be on Alfred's public address: the browser opens it in Lamio's call window.
+ */
+export async function callPass(slug: string, name: string, fetcher: Fetcher = fetch, env: Record<string, string | undefined> = process.env) {
+  const config = alfredConfig(env);
+  const r = await call<{ url: string }>(`/api/v1/video/rooms/${encodeURIComponent(slug)}/passes`, fetcher, env, "POST", { name: name.slice(0, 50) });
+  if (!config || typeof r.url !== "string" || !r.url.startsWith(`${config.url}/v/`)) throw new AlfredError("Réponse d'Alfred illisible", 502);
+  return { url: r.url };
+}

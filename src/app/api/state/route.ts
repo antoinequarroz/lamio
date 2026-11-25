@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { AppState } from "@/lib/types";
 import { listModules } from "@/modules/registry";
-import { calendarConfigured } from "@/server/alfred";
+import { calendarConfigured, callsConfigured } from "@/server/alfred";
 import { currentUser } from "@/server/auth";
 import { listConversations, listUsers, moduleAccess } from "@/server/db";
 import { unauthorized } from "@/server/http";
@@ -19,6 +19,6 @@ export async function GET() {
     return { ...m, allowed: me.role === "admin" || ids.includes(me.id), ...(me.role === "admin" && { allowedIds: ids }) };
   });
   const calendar = calendarConfigured() && !!modules.find((m) => m.id === "agenda")?.allowed;
-  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id, me.role), modules, calendar };
+  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id, me.role), modules, calendar, calls: callsConfigured() };
   return NextResponse.json(state);
 }

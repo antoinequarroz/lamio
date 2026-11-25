@@ -424,3 +424,20 @@ describe("anciennes bases", () => {
     expect(store.listMessages("c1").messages[0]).toMatchObject({ body: "Ancien message", parentId: null, editedAt: null, replyCount: 0, reactions: [] });
   });
 });
+
+describe("appels", () => {
+  it("un message d'appel garde sa salle, et seuls ceux qui lisent la conversation peuvent rejoindre", () => {
+    const { ana, bob, cleo, general } = team();
+    const secret = store.createChannel({ name: "secret", private: true, createdBy: ana.id })!;
+    const m = store.addMessage({ conversationId: secret, userId: ana.id, body: "", fileIds: [], call: { slug: "abcd-efgh-2345", title: "#secret" } })!;
+    expect(m.call).toEqual({ slug: "abcd-efgh-2345", title: "#secret" });
+    expect(store.getMessage(m.id)?.call).toEqual({ slug: "abcd-efgh-2345", title: "#secret" });
+    expect(store.mayJoinCall("abcd-efgh-2345", ana.id)).toBe(true);
+    expect(store.mayJoinCall("abcd-efgh-2345", bob.id)).toBe(false);
+    expect(store.mayJoinCall("inconnu-0000", ana.id)).toBe(false);
+    // Un message ordinaire n'a pas d'appel ; un message vide sans appel est refusé.
+    expect(store.addMessage({ conversationId: general.id, userId: cleo.id, body: "salut", fileIds: [] })?.call).toBeNull();
+    expect(store.addMessage({ conversationId: general.id, userId: cleo.id, body: "", fileIds: [] })).toBeNull();
+    expect(store.callTitle(general.id, ana.id)).toBe("#general");
+  });
+});

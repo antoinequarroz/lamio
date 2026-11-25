@@ -10,6 +10,7 @@ import { AppProvider, useApp } from "@/lib/store";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
 import { APP_NAME, cn, moduleLink } from "@/lib/utils";
+import { CallWindow } from "./call";
 import { CommandMenu } from "./command-menu";
 import { NewChannelDialog, NewDmDialog } from "./dialogs";
 import { Logo } from "./logo";
@@ -62,6 +63,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       </main>
       <CommandMenu />
       <Notifier />
+      <CallWindow />
       {dialog === "channel" && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === "dm" && <NewDmDialog onClose={() => setDialog(null)} />}
       <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
@@ -176,7 +178,7 @@ const forMe = (c: Conversation) => (c.kind === "dm" ? c.unread : c.mentions);
 /** Tells me about a mention or a direct message that arrives while I am looking elsewhere. */
 function Notifier() {
   const router = useRouter();
-  const { listen, isReading, conversations, userById, titleOf, me } = useApp();
+  const { listen, isReading, conversations, userById, titleOf, me, joinCall } = useApp();
   const latest = useRef({ conversations, userById, titleOf });
   latest.current = { conversations, userById, titleOf };
 
@@ -186,6 +188,15 @@ function Notifier() {
         if (event.type !== "message") return;
         const m = event.message;
         const conversation = latest.current.conversations.find((c) => c.id === m.conversationId);
+        // A call started by someone else, in a conversation I am in: an invitation to join.
+        if (m.call && m.userId !== me.id) {
+          const author = latest.current.userById(m.userId)?.name ?? "Quelqu'un";
+          const where = conversation ? latest.current.titleOf(conversation) : "";
+          const join = () => void joinCall(m.call!.slug, m.call!.title);
+          if (document.hidden) deviceNotify(`${author} t'appelle`, where, `call${m.id}`, join);
+          else toast(`${author} lance un appel`, { id: `call:${m.call.slug}`, description: where, duration: 30_000, action: { label: "Rejoindre", onClick: join } });
+          return;
+        }
         // Not in my list yet: the first message of a new direct conversation.
         const direct = !conversation || conversation.kind === "dm";
         if (m.userId === me.id || isReading(m.conversationId) || !(direct || m.mentionIds.includes(me.id))) return;
@@ -197,7 +208,7 @@ function Notifier() {
         if (document.hidden) deviceNotify(title, text, `m${m.id}`, open);
         else toast(title, { description: text.length > 140 ? `${text.slice(0, 140)}…` : text, action: { label: "Ouvrir", onClick: open } });
       }),
-    [listen, isReading, me.id, router],
+    [listen, isReading, me.id, router, joinCall],
   );
   return null;
 }
