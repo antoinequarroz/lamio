@@ -232,3 +232,17 @@ TICKUP_TOKEN=tku_…
 ```
 
 Sans cette clé, la fenêtre explique comment la brancher et rien d'autre ne change. Les tickets portent le nom « Lamio » dans TickUp ; la clé se révoque depuis TickUp. « Partager dans Lamio » (touche L) n'a besoin d'aucun réglage.
+
+### Aide IA dans les mails (facultatif)
+
+Le bouton « Aide IA » (étincelles) d'un mail résume la conversation, repère ce qu'elle demande (rendez-vous à ajouter au calendrier d'Alfred, tâche ou montant à mettre dans TickUp) et rédige une réponse dans ton ton, appris sur tes derniers mails envoyés. Le brouillon s'ouvre dans la fenêtre de rédaction : rien ne part sans toi.
+
+Lamio passe par l'API d'Anthropic (Claude). Crée une clé sur console.anthropic.com (Settings › API keys), puis dans `~/lamio/.env` :
+
+```env
+ANTHROPIC_API_KEY=sk-ant-…
+```
+
+et reconstruis. Ne colle jamais cette clé dans une discussion. Sans clé, le bouton n'apparaît pas ; `MAIL_AI=off` l'éteint aussi avec une clé.
+
+Les mails ne partent chez Anthropic que quand tu appuies sur le bouton. Un résumé est gardé dans Lamio tant que la conversation ne change pas, donc le rouvrir ne coûte rien. Compter quelques centimes par résumé ou brouillon.

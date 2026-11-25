@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { aiReady } from "@/server/mail/ai";
 import { currentUser } from "@/server/auth";
 import { publish } from "@/server/events";
 import { body, fail, unauthorized } from "@/server/http";
@@ -15,7 +16,7 @@ export async function GET() {
   const me = await currentUser();
   if (!me) return unauthorized();
   const account = mailAccountInfo(me.id);
-  return NextResponse.json({ enabled: mailEnabled(), account: account && { ...account, live: isLive(me.id) } });
+  return NextResponse.json({ enabled: mailEnabled(), account: account && { ...account, live: isLive(me.id), ai: aiReady() } });
 }
 
 /** Plugs in (or changes) my mailbox: both servers must accept the login before anything is saved. */

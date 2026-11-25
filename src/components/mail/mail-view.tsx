@@ -1,12 +1,13 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, Clock, MailOpen, MailX, AlarmClock, BellRing, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, Clock, MailOpen, MailX, AlarmClock, BellRing, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, Sparkles, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
+import { AiPanel, aiTextToHtml } from "@/components/mail/ai-help";
 import { ShareDialog, TicketDialog } from "@/components/mail/gateways";
 import { WhenMenu, whenText } from "@/components/mail/when-menu";
 import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
@@ -364,7 +365,7 @@ export function MailView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]") || (!help && document.querySelector("[role=dialog][aria-modal]"))) return;
       const list = search ? results : messages;
       const i = list.findIndex((m) => m.folder === folder && m.uid === openUid);
       if (e.key === "?" && !compose && !moving) {
@@ -669,6 +670,7 @@ export function MailView() {
             later={later}
             onLater={loadLater}
             sent={current?.specialUse === "\\Sent"}
+            ai={!!info.ai}
           /> : <EmptyReader count={current?.unread ?? 0} />}
       </section>
       {moving && (
@@ -1125,7 +1127,10 @@ function Reader({
   later,
   onLater,
   sent,
+  ai,
 }: {
+  /** The AI help is on (the server has an Anthropic key). */
+  ai: boolean;
   later: MailLaterInfo[];
   onLater: () => void;
   /** In the Sent folder: "Relance-moi" instead of "Reporter". */
@@ -1153,6 +1158,10 @@ function Reader({
   const [error, setError] = useState("");
   const [members, setMembers] = useState<MailSummary[]>([]);
   const [gateway, setGateway] = useState<"share" | "ticket" | null>(null);
+  const [ticketInit, setTicketInit] = useState<{ title: string; note: string } | undefined>();
+  // Asked for each mail: Claude reads a mail only when I press the button.
+  const [aiOpen, setAiOpen] = useState(false);
+  useEffect(() => setAiOpen(false), [folder, uid]);
 
   useEffect(() => {
     let live = true;
@@ -1212,7 +1221,7 @@ function Reader({
     if (!mail || busy || gateway) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]") || document.querySelector("[role=dialog][aria-modal]")) return;
       const mode = ({ r: "reply", a: "replyAll", f: "forward" } as Record<string, ComposeMode>)[e.key];
       const action = ({ e: { type: "archive" }, "#": trash ? { type: "delete" } : { type: "trash" }, Delete: trash ? { type: "delete" } : { type: "trash" }, u: { type: "seen", value: false }, s: { type: "flagged", value: !mail.flagged }, "!": junk ? { type: "move", to: "INBOX" } : { type: "spam" } } as Record<string, MailAction>)[e.key];
       if (mode && !isDrafts) {
@@ -1319,6 +1328,7 @@ function Reader({
             </WhenMenu>
           )
         )}
+        {ai && !isDrafts && <Action label="Aide IA : résumé et brouillon de réponse" Icon={Sparkles} active={aiOpen} onClick={() => setAiOpen(!aiOpen)} />}
         <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
         <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
         {isDrafts ? (
@@ -1345,7 +1355,16 @@ function Reader({
         />
       </header>
       {gateway === "share" && <ShareDialog mail={mail} onClose={() => setGateway(null)} />}
-      {gateway === "ticket" && <TicketDialog mail={mail} onClose={() => setGateway(null)} />}
+      {gateway === "ticket" && (
+        <TicketDialog
+          mail={mail}
+          initial={ticketInit}
+          onClose={() => {
+            setGateway(null);
+            setTicketInit(undefined);
+          }}
+        />
+      )}
       <div className="scroll-thin flex-1 overflow-y-auto px-6 py-6 max-md:px-4">
         <div className="mx-auto max-w-[720px]">
           {waiting && (
@@ -1356,6 +1375,17 @@ function Reader({
                 {waiting.kind === "snooze" ? "Faire revenir maintenant" : "Annuler la relance"}
               </button>
             </div>
+          )}
+          {aiOpen && (
+            <AiPanel
+              mail={mail}
+              onClose={() => setAiOpen(false)}
+              onDraft={(text) => onCompose({ ...composeFrom(mail, "reply", me), html: aiTextToHtml(text) })}
+              onTicket={(init) => {
+                setTicketInit(init);
+                setGateway("ticket");
+              }}
+            />
           )}
           <h2 className="text-[22px] leading-tight font-semibold tracking-[-0.01em]">{mail.subject || "(sans objet)"}</h2>
           {conversation ? (

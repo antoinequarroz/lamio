@@ -143,14 +143,14 @@ const PRIORITIES = [
 const titleFrom = (subject: string) => subject.replace(/^\s*((re|tr|fwd?|aw|wg)\s*(\[\d+\])?\s*:\s*)+/i, "").trim().slice(0, 200);
 
 /** Turns a mail into a TickUp ticket: project, title, priority and a note; the mail goes in the description. */
-export function TicketDialog({ mail, onClose }: { mail: MailContent; onClose: () => void }) {
+export function TicketDialog({ mail, initial, onClose }: { mail: MailContent; initial?: { title: string; note: string }; onClose: () => void }) {
   const [projects, setProjects] = useState<{ key: string; name: string }[] | null>(null);
   const [ready, setReady] = useState(true);
   const [error, setError] = useState("");
   const [project, setProject] = useStored("mail-tickup-project", "");
-  const [title, setTitle] = useState(() => titleFrom(mail.subject));
+  const [title, setTitle] = useState(() => initial?.title || titleFrom(mail.subject));
   const [priority, setPriority] = useState(0);
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState(initial?.note ?? "");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {

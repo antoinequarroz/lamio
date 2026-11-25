@@ -235,6 +235,14 @@ export function db() {
     created_at text not null,
     primary key (user_id, address)
   )`);
+  // Mails, AI help: a conversation's summary, kept until the conversation changes (key = its mails).
+  conn.exec(`create table if not exists mail_ai (
+    user_id text not null references users (id) on delete cascade,
+    key text not null,
+    result text not null,
+    created_at text not null,
+    primary key (user_id, key)
+  )`);
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { aiReady } from "@/server/mail/ai";
 import { currentUser } from "@/server/auth";
 import { fail, unauthorized } from "@/server/http";
 import { isLive, syncNow } from "@/server/mail/service";
@@ -16,5 +17,5 @@ export async function POST() {
   if (account.status === "auth") setMailStatus(me.id, "pending");
   await syncNow(me.id, { full: true });
   const info = mailAccountInfo(me.id);
-  return NextResponse.json({ account: info && { ...info, live: isLive(me.id) } });
+  return NextResponse.json({ account: info && { ...info, live: isLive(me.id), ai: aiReady() } });
 }

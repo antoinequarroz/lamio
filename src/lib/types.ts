@@ -170,7 +170,24 @@ export type MailAccountInfo = {
   live: boolean;
   /** The addresses I send from, the mailbox's own first (its signature is `signature`). */
   identities: MailIdentity[];
+  /** The AI help (summary, draft reply) is on: the server has an Anthropic key. Filled by the routes. */
+  ai?: boolean;
 };
+
+/** Something a conversation asks of me, found by the AI help: a meeting, a task, an amount. */
+export type MailAiAction = {
+  kind: "rdv" | "tache" | "montant";
+  title: string;
+  /** Local time of Switzerland, "2026-11-27T14:00" (or "2026-11-27" for a whole day); empty when unknown. */
+  start: string;
+  end: string;
+  allDay: boolean;
+  amount: string;
+  details: string;
+};
+
+/** A conversation summed up by the AI help. */
+export type MailAiSummary = { summary: string; actions: MailAiAction[]; mails: number; at: string };
 
 /** An address I send from: the mailbox's own, or an alias delivered into it. */
 export type MailIdentity = {
