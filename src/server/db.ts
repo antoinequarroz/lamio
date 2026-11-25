@@ -186,6 +186,8 @@ export function db() {
   addColumn("messages", "parent_id", "integer references messages (id) on delete cascade");
   // Mails: the text of a mail, kept once it has been opened.
   addColumn("mail_messages", "body_text", "text");
+  // Mails: the signature added under each new mail.
+  addColumn("mail_accounts", "signature", "text not null default ''");
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;

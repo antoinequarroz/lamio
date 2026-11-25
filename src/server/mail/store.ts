@@ -20,6 +20,7 @@ type AccountRow = {
   status: MailStatus;
   last_error: string | null;
   synced_at: string | null;
+  signature: string | null;
 };
 
 const toInfo = (r: AccountRow): MailAccountInfo => ({
@@ -32,6 +33,7 @@ const toInfo = (r: AccountRow): MailAccountInfo => ({
   status: r.status,
   lastError: r.last_error,
   syncedAt: r.synced_at,
+  signature: r.signature ?? "",
   // Known by the mail service only: the routes fill it in.
   live: false,
 });
@@ -299,4 +301,45 @@ export const isTrustedSender = (userId: string, address: string) =>
 export function setTrustedSender(userId: string, address: string, trusted: boolean) {
   if (trusted) db().prepare("insert or ignore into mail_trusted_senders (user_id, address, created_at) values (?, ?, ?)").run(userId, normal(address), now());
   else db().prepare("delete from mail_trusted_senders where user_id = ? and address = ?").run(userId, normal(address));
+}
+
+export const setSignature = (userId: string, signature: string) => db().prepare("update mail_accounts set signature = ? where user_id = ?").run(signature, userId);
+
+// ---- Writing
+
+/** The folder with this role (\\Sent, \\Drafts, \\Trash…), or null when the mailbox has none. */
+export function specialFolder(userId: string, use: string): string | null {
+  const r = db().prepare("select path from mail_folders where user_id = ? and special_use = ?").get(userId, use) as { path: string } | undefined;
+  return r?.path ?? null;
+}
+
+/** What a reply needs to stay in its conversation. */
+export function threadHeaders(userId: string, folder: string, uid: number): { messageId: string | null; inReplyTo: string | null; references: string[] } | null {
+  const r = db().prepare("select message_id, in_reply_to, refs from mail_messages where user_id = ? and folder = ? and uid = ?").get(userId, folder, uid) as
+    | { message_id: string | null; in_reply_to: string | null; refs: string | null }
+    | undefined;
+  if (!r) return null;
+  return { messageId: r.message_id, inReplyTo: r.in_reply_to, references: (r.refs ?? "").split(/\s+/).filter(Boolean) };
+}
+
+/** The people already seen in the mailbox (senders and recipients), the most frequent first. */
+export function mailContacts(userId: string, query: string, limit = 8): MailAddress[] {
+  const q = `%${query.trim().toLowerCase().replace(/[%_]/g, "")}%`;
+  const rows = db()
+    .prepare(
+      `with people as (
+         select from_name as name, from_address as address from mail_messages where user_id = ?
+         union all
+         select json_extract(p.value, '$.name'), json_extract(p.value, '$.address')
+           from mail_messages m, json_each(m.recipients, '$.to') p where m.user_id = ?
+         union all
+         select json_extract(p.value, '$.name'), json_extract(p.value, '$.address')
+           from mail_messages m, json_each(m.recipients, '$.cc') p where m.user_id = ?
+       )
+       select lower(address) as address, max(name) as name, count(*) as n from people
+       where address like '%@%' and (lower(address) like ? or lower(name) like ?)
+       group by lower(address) order by n desc limit ?`,
+    )
+    .all(userId, userId, userId, q, q, limit) as { address: string; name: string | null }[];
+  return rows.map((r) => ({ name: r.name ?? "", address: r.address }));
 }

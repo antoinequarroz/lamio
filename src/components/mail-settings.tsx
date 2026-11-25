@@ -140,6 +140,7 @@ function MailStatusCard({ account, folders, onEdit, onChange }: { account: MailA
           {account.live ? "Temps réel : un nouveau mail arrive ici en une ou deux secondes." : "Temps réel en cours de connexion…"}
         </p>
       )}
+      <SignatureField initial={account.signature} />
       <div className="flex flex-wrap gap-2">
         <Button onClick={sync} disabled={busy !== null}>
           <RefreshCw className={cn("size-4", busy === "sync" && "animate-spin")} />
@@ -154,6 +155,27 @@ function MailStatusCard({ account, folders, onEdit, onChange }: { account: MailA
         </Button>
       </div>
     </Card>
+  );
+}
+
+/** The signature under new mails, saved when the field is left. */
+function SignatureField({ initial }: { initial: string }) {
+  const [value, setValue] = useState(initial);
+  const [saved, setSaved] = useState(initial);
+  const save = async () => {
+    if (value === saved) return;
+    try {
+      await api("/api/mail/signature", { method: "PUT", json: { signature: value } });
+      setSaved(value);
+      toast("Signature enregistrée");
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  return (
+    <Field label="Signature" hint="Ajoutée sous chaque nouveau mail, réponse ou transfert.">
+      <textarea value={value} onChange={(e) => setValue(e.target.value)} onBlur={() => void save()} rows={3} maxLength={2000} placeholder={"Antoine Quarroz\nPostmelo"} className={cn(inputClass, "h-auto resize-y py-2 leading-snug")} />
+    </Field>
   );
 }
 

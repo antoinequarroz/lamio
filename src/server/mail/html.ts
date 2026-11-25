@@ -109,3 +109,17 @@ export function cleanMailHtml(html: string, inline: Map<string, string> = new Ma
   if (!remote && /url\(\s*['"]?\s*https?:/i.test(out)) remote = true;
   return { html: out, remote };
 }
+
+/**
+ * The HTML of a mail being sent, written in Lamio's editor (or pasted into it): simple
+ * formatting only, images kept as they are (they are the person's own choice).
+ */
+export function cleanOutgoingHtml(html: string): string {
+  return sanitizeHtml(html, {
+    allowedTags: ["p", "div", "br", "span", "b", "strong", "i", "em", "u", "s", "strike", "a", "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "pre", "code", "hr", "img", "table", "thead", "tbody", "tr", "td", "th", "font", "sub", "sup"],
+    allowedAttributes: { "*": ["style", "dir"], a: ["href"], img: ["src", "alt", "width", "height"], td: ["colspan", "rowspan"], th: ["colspan", "rowspan"], font: ["color", "face", "size"] },
+    allowedSchemes: ["http", "https", "mailto", "tel"],
+    allowedSchemesByTag: { img: ["http", "https", "data", "cid"] },
+    allowProtocolRelative: false,
+  });
+}

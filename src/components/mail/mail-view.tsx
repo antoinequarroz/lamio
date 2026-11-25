@@ -1,14 +1,15 @@
 "use client";
 
-import { Archive, ArrowLeft, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, Inbox, Loader2, Mail, Paperclip, RefreshCw, Send, ShieldAlert, Trash2, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, Forward, Inbox, Loader2, Mail, Paperclip, PencilLine, RefreshCw, Reply, ReplyAll, Send, ShieldAlert, SquarePen, Trash2, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Compose, composeFrom, type ComposeInit, type SendState } from "@/components/mail/compose";
 import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
 import { Avatar, Button, Card, Kbd } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import type { MailAccountInfo, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
+import type { ComposeMode, MailAccountInfo, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
@@ -43,6 +44,9 @@ export function MailView() {
   const [loading, setLoading] = useState(true);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
+  const [compose, setCompose] = useState<ComposeInit | null>(null);
+  // Mails waiting to leave or just sent: to reopen them on "Annuler" or when sending failed.
+  const outgoing = useRef(new Map<string, SendState>());
 
   const folder = params.get("f") || "INBOX";
   const openUid = Number(params.get("m")) || null;
@@ -96,6 +100,13 @@ export function MailView() {
           return;
         }
         if (e.type !== "mail") return;
+        if (e.sent) {
+          const s = outgoing.current.get(e.sent.id);
+          outgoing.current.delete(e.sent.id);
+          if (e.sent.error) toast.error("Le mail n'est pas parti", { description: e.sent.error, duration: 15000, action: s ? { label: "Rouvrir", onClick: () => setCompose({ ...s, unsaved: true }) } : undefined });
+          else if (s) toast.success("Mail envoyé");
+          return;
+        }
         void loadFolders().catch(() => {});
         if (e.folders.includes(folder) || e.folders.includes("*")) void loadMessages(folder, shown.current).catch(() => {});
         if (e.added?.length && folder === "INBOX") {
@@ -133,6 +144,12 @@ export function MailView() {
       const t = e.target as HTMLElement;
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
       const i = messages.findIndex((m) => m.uid === openUid);
+      if (e.key === "c" && !compose) {
+        e.preventDefault();
+        setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" });
+        return;
+      }
+      if (compose) return;
       if (e.key === "j" || e.key === "ArrowDown") {
         const next = messages[i + 1] ?? (i === -1 ? messages[0] : null);
         if (next) {
@@ -149,7 +166,29 @@ export function MailView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [messages, openUid, folder, go]);
+  }, [messages, openUid, folder, go, compose]);
+
+  const sent = useCallback((id: string, undoMs: number, state: SendState) => {
+    outgoing.current.set(id, state);
+    setCompose(null);
+    toast("Envoi du mail…", {
+      id,
+      duration: undoMs,
+      action: {
+        label: "Annuler",
+        onClick: async () => {
+          try {
+            await api(`/api/mail/send?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+            outgoing.current.delete(id);
+            setCompose({ ...state, unsaved: true });
+            toast("Envoi annulé", { description: "Le mail est de nouveau ouvert." });
+          } catch (e) {
+            toast.error((e as Error).message);
+          }
+        },
+      },
+    });
+  }, []);
 
   const markSeen = useCallback((uid: number) => setMessages((m) => m.map((x) => (x.uid === uid ? { ...x, seen: true } : x))), []);
 
@@ -187,6 +226,9 @@ export function MailView() {
             <Zap className={cn("size-3.5", info.live ? "text-accent" : "text-ink-3")} />
             <span className="text-[11.5px] text-ink-3 max-sm:hidden">{info.live ? "En direct" : "Connexion…"}</span>
           </span>
+          <button onClick={() => setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" })} aria-label="Nouveau mail" title="Nouveau mail (C)" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
+            <SquarePen className="size-4" />
+          </button>
           <button onClick={sync} disabled={syncing} aria-label="Synchroniser" title="Synchroniser" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
             <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
           </button>
@@ -203,8 +245,9 @@ export function MailView() {
 
       {/* Reading */}
       <section className={cn("flex min-w-0 flex-1 flex-col", !openUid && "max-md:hidden")}>
-        {openUid ? <Reader key={`${folder}|${openUid}`} folder={folder} uid={openUid} onBack={() => go(folder, null)} onSeen={markSeen} /> : <EmptyReader count={current?.unread ?? 0} />}
+        {openUid ? <Reader key={`${folder}|${openUid}`} folder={folder} uid={openUid} me={info.email} isDrafts={current?.specialUse === "\\Drafts"} composing={!!compose} onCompose={setCompose} onBack={() => go(folder, null)} onSeen={markSeen} /> : <EmptyReader count={current?.unread ?? 0} />}
       </section>
+      {compose && <Compose key={JSON.stringify([compose.mode, compose.ref, compose.draft, compose.subject])} init={compose} signature={info.signature} onClose={() => setCompose(null)} onSent={sent} />}
     </div>
   );
 }
@@ -321,7 +364,25 @@ const PREVIEW_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/w
 const attachmentUrl = (mail: { folder: string; uid: number }, a: MailAttachment, inline = false) =>
   `/api/mail/attachment?folder=${encodeURIComponent(mail.folder)}&uid=${mail.uid}&part=${encodeURIComponent(a.part)}${inline ? "&inline=1" : ""}`;
 
-function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; onBack: () => void; onSeen: (uid: number) => void }) {
+function Reader({
+  folder,
+  uid,
+  me,
+  isDrafts,
+  composing,
+  onCompose,
+  onBack,
+  onSeen,
+}: {
+  folder: string;
+  uid: number;
+  me: string;
+  isDrafts: boolean;
+  composing: boolean;
+  onCompose: (init: ComposeInit) => void;
+  onBack: () => void;
+  onSeen: (uid: number) => void;
+}) {
   const [mail, setMail] = useState<MailContent | null>(null);
   const [error, setError] = useState("");
   const [showImages, setShowImages] = useState(false);
@@ -358,6 +419,21 @@ function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; 
     }
   };
 
+  // r: reply, a: reply to all, f: forward.
+  useEffect(() => {
+    if (!mail || composing) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
+      const mode = ({ r: "reply", a: "replyAll", f: "forward" } as Record<string, ComposeMode>)[e.key];
+      if (!mode) return;
+      e.preventDefault();
+      onCompose(composeFrom(mail, mode, me));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mail, composing, me, onCompose]);
+
   const back = (
     <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
       <ArrowLeft className="size-4" />
@@ -383,11 +459,23 @@ function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; 
   const recipients = [...mail.to, ...mail.cc];
   return (
     <article className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3 md:px-6">
+      <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line px-3 md:px-6">
         {back}
-        <span className="text-[12px] text-ink-3">
+        <span className="min-w-0 truncate text-[12px] text-ink-3">
           {new Date(mail.date).toLocaleString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
         </span>
+        <span className="flex-1" />
+        {isDrafts ? (
+          <button onClick={() => onCompose(composeFrom(mail, "draft", me))} className="press flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-[12.5px] font-medium text-accent-ink">
+            <PencilLine className="size-3.5" /> Reprendre
+          </button>
+        ) : (
+          <>
+            <Action label="Répondre (R)" Icon={Reply} onClick={() => onCompose(composeFrom(mail, "reply", me))} />
+            <Action label="Répondre à tous (A)" Icon={ReplyAll} onClick={() => onCompose(composeFrom(mail, "replyAll", me))} />
+            <Action label="Transférer (F)" Icon={Forward} onClick={() => onCompose(composeFrom(mail, "forward", me))} />
+          </>
+        )}
       </header>
       <div className="scroll-thin flex-1 overflow-y-auto px-6 py-6 max-md:px-4">
         <div className="mx-auto max-w-[720px]">
@@ -490,6 +578,14 @@ function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; 
       </div>
       {preview && <ImagePreview src={attachmentUrl(mail, preview, true)} name={preview.name} download={attachmentUrl(mail, preview)} onClose={() => setPreview(null)} />}
     </article>
+  );
+}
+
+function Action({ label, Icon, onClick, active }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean }) {
+  return (
+    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex size-8 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", active ? "text-accent" : "text-ink-3")}>
+      <Icon className="size-4" />
+    </button>
   );
 }
 
