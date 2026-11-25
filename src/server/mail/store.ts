@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/server/db";
-import type { MailAccountInfo, MailAddress, MailFolder, MailStatus, MailSummary } from "@/lib/types";
+import type { MailAccountInfo, MailAttachment, MailAddress, MailFolder, MailStatus, MailSummary } from "@/lib/types";
 
 const now = () => new Date().toISOString();
 
@@ -260,13 +260,16 @@ export function mailSummaries(userId: string, folder: string, uids: number[]): M
 
 // ---- Opened mails
 
-type Body = { text: string; fromHtml: boolean; attachmentList: { name: string; type: string; size: number }[] };
+/** The opened mail, kept. v changes when its shape does: an older one is read again from the server. */
+export type MailBody = { v: 2; text: string; html: string | null; remoteImages: boolean; attachmentList: MailAttachment[] };
+type Body = MailBody;
 
 export function mailBody(userId: string, folder: string, uid: number): Body | null {
   const r = db().prepare("select body_text from mail_messages where user_id = ? and folder = ? and uid = ?").get(userId, folder, uid) as { body_text: string | null } | undefined;
   if (!r?.body_text) return null;
   try {
-    return JSON.parse(r.body_text) as Body;
+    const body = JSON.parse(r.body_text) as Body;
+    return body.v === 2 ? body : null;
   } catch {
     return null;
   }
@@ -284,4 +287,16 @@ export function inboxUnread(userId: string): number | null {
   if (!db().prepare("select 1 from mail_accounts where user_id = ?").get(userId)) return null;
   const r = db().prepare("select unread from mail_folders where user_id = ? and special_use = '\\Inbox'").get(userId) as { unread: number } | undefined;
   return r?.unread ?? 0;
+}
+
+// ---- Senders whose remote images are always shown
+
+const normal = (address: string) => address.trim().toLowerCase();
+
+export const isTrustedSender = (userId: string, address: string) =>
+  !!address && !!db().prepare("select 1 from mail_trusted_senders where user_id = ? and address = ?").get(userId, normal(address));
+
+export function setTrustedSender(userId: string, address: string, trusted: boolean) {
+  if (trusted) db().prepare("insert or ignore into mail_trusted_senders (user_id, address, created_at) values (?, ?, ?)").run(userId, normal(address), now());
+  else db().prepare("delete from mail_trusted_senders where user_id = ? and address = ?").run(userId, normal(address));
 }

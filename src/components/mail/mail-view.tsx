@@ -1,13 +1,14 @@
 "use client";
 
-import { Archive, ArrowLeft, File, FileText, Flag, Folder, Inbox, Loader2, Mail, Paperclip, RefreshCw, Send, ShieldAlert, Trash2, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, Inbox, Loader2, Mail, Paperclip, RefreshCw, Send, ShieldAlert, Trash2, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ImagePreview, MailFrame } from "@/components/mail/mail-frame";
 import { Avatar, Button, Card, Kbd } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import type { MailAccountInfo, MailContent, MailFolder, MailSummary } from "@/lib/types";
+import type { MailAccountInfo, MailAttachment, MailContent, MailFolder, MailSummary } from "@/lib/types";
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
@@ -130,7 +131,7 @@ export function MailView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || t.closest("input, textarea, select, [contenteditable=true]")) return;
       const i = messages.findIndex((m) => m.uid === openUid);
       if (e.key === "j" || e.key === "ArrowDown") {
         const next = messages[i + 1] ?? (i === -1 ? messages[0] : null);
@@ -144,7 +145,7 @@ export function MailView() {
           e.preventDefault();
           go(folder, prev.uid);
         }
-      } else if (e.key === "Escape" && openUid) go(folder, null);
+      } else if (e.key === "Escape" && openUid && !e.defaultPrevented) go(folder, null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -315,12 +316,23 @@ function Linkified({ text }: { text: string }) {
   );
 }
 
+const PREVIEW_IMAGES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
+
+const attachmentUrl = (mail: { folder: string; uid: number }, a: MailAttachment, inline = false) =>
+  `/api/mail/attachment?folder=${encodeURIComponent(mail.folder)}&uid=${mail.uid}&part=${encodeURIComponent(a.part)}${inline ? "&inline=1" : ""}`;
+
 function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; onBack: () => void; onSeen: (uid: number) => void }) {
   const [mail, setMail] = useState<MailContent | null>(null);
   const [error, setError] = useState("");
+  const [showImages, setShowImages] = useState(false);
+  const [asText, setAsText] = useState(false);
+  const [preview, setPreview] = useState<MailAttachment | null>(null);
 
   useEffect(() => {
     let live = true;
+    setShowImages(false);
+    setAsText(false);
+    setPreview(null);
     api<{ mail: MailContent }>(`/api/mail/message?folder=${encodeURIComponent(folder)}&uid=${uid}`).then(
       (r) => {
         if (!live) return;
@@ -333,6 +345,18 @@ function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; 
       live = false;
     };
   }, [folder, uid, onSeen]);
+
+  const trust = async (trusted: boolean) => {
+    if (!mail) return;
+    try {
+      await api("/api/mail/trust", { method: "POST", json: { address: mail.from.address, trusted } });
+      setMail({ ...mail, trusted });
+      if (!trusted) setShowImages(false);
+      toast.success(trusted ? `Les images de ${mail.from.address} s'afficheront toujours` : "Les images de cet expéditeur seront de nouveau bloquées");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const back = (
     <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
@@ -385,20 +409,86 @@ function Reader({ folder, uid, onBack, onSeen }: { folder: string; uid: number; 
 
           {mail.attachmentList.length > 0 && (
             <ul className="mt-5 flex flex-wrap gap-2">
-              {mail.attachmentList.map((a, i) => (
-                <li key={i} className="flex max-w-[260px] items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[12.5px]" title="Le téléchargement des pièces jointes arrive bientôt">
-                  <File className="size-4 shrink-0 text-ink-3" />
-                  <span className="min-w-0 truncate">{a.name}</span>
-                  {a.size > 0 && <span className="shrink-0 text-ink-3">{fileSize(a.size)}</span>}
-                </li>
-              ))}
+              {mail.attachmentList.map((a) => {
+                const image = PREVIEW_IMAGES.has(a.type);
+                const pdf = a.type === "application/pdf";
+                const Icon = image ? ImageIcon : pdf ? FileText : File;
+                const label = (
+                  <>
+                    <Icon className="size-4 shrink-0 text-ink-3" />
+                    <span className="min-w-0 truncate">{a.name}</span>
+                    {a.size > 0 && <span className="shrink-0 text-ink-3">{fileSize(a.size)}</span>}
+                  </>
+                );
+                const chip = "press flex max-w-[280px] items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[12.5px] hover:border-line-strong";
+                return (
+                  <li key={a.part} className="flex items-center">
+                    {image ? (
+                      <button onClick={() => setPreview(a)} className={cn(chip, "rounded-r-none")} title={`Voir ${a.name}`}>
+                        {label}
+                      </button>
+                    ) : pdf ? (
+                      <a href={attachmentUrl(mail, a, true)} target="_blank" rel="noreferrer" className={cn(chip, "rounded-r-none")} title={`Ouvrir ${a.name}`}>
+                        {label}
+                      </a>
+                    ) : (
+                      <a href={attachmentUrl(mail, a)} download={a.name} className={chip} title={`Télécharger ${a.name}`}>
+                        {label}
+                        <Download className="size-3.5 shrink-0 text-ink-3" />
+                      </a>
+                    )}
+                    {(image || pdf) && (
+                      <a href={attachmentUrl(mail, a)} download={a.name} aria-label={`Télécharger ${a.name}`} className="press flex self-stretch items-center rounded-r-lg border border-l-0 border-line bg-surface-2 px-2 text-ink-3 hover:border-line-strong hover:text-ink">
+                        <Download className="size-3.5" />
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
 
-          <div className="mt-6 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap text-ink">{mail.text ? <Linkified text={mail.text} /> : <span className="text-ink-3">(mail sans texte)</span>}</div>
-          {mail.fromHtml && <p className="mt-8 border-t border-line pt-3 text-[12px] text-ink-3">Mail mis en page, affiché ici en texte. La mise en page d&apos;origine arrive bientôt.</p>}
+          {mail.html && !asText ? (
+            <div className="mt-6">
+              {mail.remoteImages && !(showImages || mail.trusted) && (
+                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
+                  <ShieldAlert className="size-4 shrink-0 text-ink-3" />
+                  <span className="min-w-0 flex-1">Images bloquées : elles peuvent dire à l&apos;expéditeur quand et où tu ouvres ce mail.</span>
+                  <button onClick={() => setShowImages(true)} className="press font-medium text-accent hover:underline">
+                    Afficher les images
+                  </button>
+                  {mail.from.address && (
+                    <button onClick={() => void trust(true)} className="press font-medium text-accent hover:underline">
+                      Toujours pour cet expéditeur
+                    </button>
+                  )}
+                </div>
+              )}
+              <MailFrame html={mail.html} showImages={showImages || mail.trusted} title={mail.subject || "Mail"} />
+              <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3">
+                <button onClick={() => setAsText(true)} className="press flex items-center gap-1 hover:text-ink">
+                  <FileText className="size-3.5" /> Voir en texte
+                </button>
+                {mail.trusted && mail.remoteImages && (
+                  <button onClick={() => void trust(false)} className="press flex items-center gap-1 hover:text-ink">
+                    <Eye className="size-3.5" /> Images toujours affichées pour {mail.from.address} · ne plus les afficher
+                  </button>
+                )}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mt-6 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap text-ink">{mail.text ? <Linkified text={mail.text} /> : <span className="text-ink-3">(mail sans texte)</span>}</div>
+              {mail.html && (
+                <button onClick={() => setAsText(false)} className="press mt-6 flex items-center gap-1 text-[12px] text-ink-3 hover:text-ink">
+                  <Eye className="size-3.5" /> Voir la mise en page d&apos;origine
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
+      {preview && <ImagePreview src={attachmentUrl(mail, preview, true)} name={preview.name} download={attachmentUrl(mail, preview)} onClose={() => setPreview(null)} />}
     </article>
   );
 }

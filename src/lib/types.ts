@@ -108,10 +108,15 @@ export type MailFolder = { path: string; name: string; delimiter: string; specia
 
 export type MailAddress = { name: string; address: string };
 
-export type MailAttachment = { name: string; type: string; size: number };
+/** A file of a mail; part is its place in the mail (IMAP section, "2" or "1.2"), to download it. */
+export type MailAttachment = { name: string; type: string; size: number; part: string };
 
-/** An opened mail: its text (HTML mails as text for now, the safe HTML view comes with LAMIO-303). */
-export type MailContent = MailSummary & { text: string; fromHtml: boolean; attachmentList: MailAttachment[] };
+/**
+ * An opened mail. html is already cleaned on the server (see server/mail/html.ts), null for a
+ * text-only mail; remoteImages says it has images to load from the internet, blocked until asked;
+ * trusted: the person chose to always show the images of this sender.
+ */
+export type MailContent = MailSummary & { text: string; html: string | null; remoteImages: boolean; attachmentList: MailAttachment[]; trusted: boolean };
 
 export type MailSummary = {
   folder: string;

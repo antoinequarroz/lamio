@@ -166,6 +166,13 @@ export function db() {
       foreign key (user_id, folder) references mail_folders (user_id, path) on delete cascade
     );
     create index if not exists mail_messages_date on mail_messages (user_id, folder, date desc);
+    -- Senders whose remote images are shown without asking ("Toujours pour cet expéditeur").
+    create table if not exists mail_trusted_senders (
+      user_id text not null references users (id) on delete cascade,
+      address text not null,
+      created_at text not null,
+      primary key (user_id, address)
+    );
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {
