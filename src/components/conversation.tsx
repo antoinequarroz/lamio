@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useApp } from "@/lib/store";
 import type { Message } from "@/lib/types";
 import { api, cn, dayLabel } from "@/lib/utils";
+import { CallButton } from "./call";
 import { Composer } from "./composer";
 import { ChannelDialog } from "./dialogs";
 import { MessageItem } from "./message";
@@ -179,6 +180,7 @@ export function ConversationView({ id }: { id: string }) {
             <h1 className="truncate font-display text-[24px] leading-none">{isChannel ? conversation.name : title}</h1>
             <p className="mt-1 truncate text-[12.5px] text-ink-3">{subtitle}</p>
           </div>
+          <CallButton conversationId={id} />
           {isChannel && (conversation.private || conversation.canManage) && (
             <Button size="sm" onClick={() => setSettingsOpen(true)} aria-label={conversation.private ? `Réglages du canal, ${people}` : "Réglages du canal"}>
               {conversation.private ? <Users className="size-3.5" /> : <Settings2 className="size-3.5" />}

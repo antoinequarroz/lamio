@@ -1,4 +1,5 @@
 import type { ModuleInfo } from "@/lib/types";
+import { calendarConfigured } from "@/server/alfred";
 
 /**
  * The modules of the suite. This app is the base: every other tool plugs in here.
@@ -79,7 +80,9 @@ export function listModules(env: Record<string, string | undefined> = process.en
   return MODULES.map(({ core, env: key, ...m }) => {
     const url = key ? validUrl(env[key]) : undefined;
     const sso = !!url && !!key && (env[secretKey(key)]?.length ?? 0) >= MIN_SSO_SECRET;
-    return { ...m, status: core ? "core" : url ? "linked" : "soon", url, ...(sso && { sso }) };
+    // Alfred's calendar also shows inside this app, in the Calendrier tab.
+    const embedded = m.id === "agenda" && calendarConfigured(env);
+    return { ...m, status: core ? "core" : url ? "linked" : "soon", url, ...(sso && { sso }), ...(embedded && { embedded }) };
   });
 }
 

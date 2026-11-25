@@ -19,7 +19,7 @@ const STATUS: Record<ModuleInfo["status"], { label: string; className: string }>
 export default function ModulesPage() {
   const { me, modules } = useApp();
   const [accessFor, setAccessFor] = useState<string | null>(null);
-  const editing = modules.find((m) => m.id === accessFor && m.sso);
+  const editing = modules.find((m) => m.id === accessFor && (m.sso || m.embedded));
 
   // Sent back here by the single sign-on when a tool is not open to this person.
   useEffect(() => {
@@ -58,7 +58,7 @@ export default function ModulesPage() {
                     ) : (
                       <span className="font-normal text-ink-3">Réservé : demande l&apos;accès à un administrateur.</span>
                     )}
-                    {m.sso && me.role === "admin" && (
+                    {(m.sso || m.embedded) && me.role === "admin" && (
                       <button onClick={() => setAccessFor(m.id)} className="press ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 text-ink-2 hover:bg-ink/5 hover:text-ink">
                         <KeyRound className="size-3.5" />
                         Accès
@@ -107,7 +107,9 @@ function AccessDialog({ module, onClose }: { module: ModuleInfo; onClose: () => 
 
   return (
     <Modal title={`Accès à ${module.name}`} onClose={onClose}>
-      <p className="mb-3 text-[13px] text-ink-3">Les personnes cochées ouvrent {module.name} avec leur compte {APP_NAME}. Les administrateurs y ont toujours accès.</p>
+      <p className="mb-3 text-[13px] text-ink-3">
+        {module.sso ? `Les personnes cochées ouvrent ${module.name} avec leur compte ${APP_NAME}.` : `Les personnes cochées voient l'onglet Calendrier, qui affiche l'agenda de ${module.name}.`} Les administrateurs y ont toujours accès.
+      </p>
       <ul className="scroll-thin -mx-2 flex max-h-[46vh] flex-col overflow-y-auto">
         {users.map((u) => {
           const admin = u.role === "admin";
