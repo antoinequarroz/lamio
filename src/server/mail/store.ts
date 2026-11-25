@@ -166,12 +166,152 @@ export const cachedUids = (userId: string, folder: string) => (db().prepare("sel
 
 export function insertMessages(userId: string, folder: string, rows: MailRow[]) {
   const insert = db().prepare(
-    `insert or replace into mail_messages (user_id, folder, uid, message_id, in_reply_to, refs, subject, from_name, from_address, recipients, date, seen, flagged, answered, attachments, size)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `insert or replace into mail_messages (user_id, folder, uid, message_id, in_reply_to, refs, subject, from_name, from_address, recipients, date, seen, flagged, answered, attachments, size, thread_id)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db().transaction(() => {
-    for (const m of rows) insert.run(userId, folder, m.uid, m.messageId, m.inReplyTo, m.references, m.subject, m.from.name, m.from.address, JSON.stringify({ to: m.to, cc: m.cc }), m.date, +m.seen, +m.flagged, +m.answered, +m.attachments, m.size);
+    // Oldest first, so a reply finds the conversation of the mail it answers.
+    for (const m of [...rows].sort((a, b) => a.date.localeCompare(b.date))) {
+      const thread = threadOf(userId, { folder, uid: m.uid, messageId: m.messageId, inReplyTo: m.inReplyTo, refs: m.references, subject: m.subject, from: m.from.address, to: [...m.to, ...m.cc].map((x) => x.address), date: m.date });
+      insert.run(userId, folder, m.uid, m.messageId, m.inReplyTo, m.references, m.subject, m.from.name, m.from.address, JSON.stringify({ to: m.to, cc: m.cc }), m.date, +m.seen, +m.flagged, +m.answered, +m.attachments, m.size, thread);
+      adopt(userId, m.messageId, thread);
+    }
   })();
+}
+
+// ---- Conversations
+
+/** "Re: TR: Fwd: AW: Devis" → "devis": what stays of a subject along a conversation. */
+export function baseSubject(subject: string): string {
+  let s = subject.trim().toLowerCase();
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(/^(re|tr|fw|fwd|aw|wg|rif|sv|vs|réf|ref)\s*(\[\d+\])?\s*:\s*/i, "").replace(/^\[[^\]]{1,40}\]\s*/, "").trim();
+  }
+  return s.replace(/\s+/g, " ");
+}
+
+const REPLY_PREFIX = /^\s*(re|tr|fw|fwd|aw|wg|rif|sv|vs)\s*(\[\d+\])?\s*:/i;
+const SUBJECT_WINDOW_MS = 60 * 86_400_000;
+
+type ThreadInput = { folder: string; uid: number; messageId: string | null; inReplyTo: string | null; refs: string | null; subject: string; from: string; to: string[]; date: string };
+
+/**
+ * The conversation of a mail. By its headers first: the conversation of a mail it answers or cites
+ * (References, In-Reply-To), else the first of those ids, else its own Message-ID. For a reply
+ * without headers (some mail apps drop them): the mail with the same subject, between the same
+ * people, in the last 60 days. Alone otherwise.
+ */
+export function threadOf(userId: string, m: ThreadInput): string {
+  const ids = [...(m.refs ?? "").split(/\s+/), m.inReplyTo ?? ""].map((x) => x.trim()).filter(Boolean);
+  if (ids.length) {
+    const known = db()
+      .prepare(`select thread_id from mail_messages where user_id = ? and thread_id is not null and message_id in (${ids.map(() => "?").join(",")}) limit 1`)
+      .get(userId, ...ids) as { thread_id: string } | undefined;
+    return known?.thread_id ?? ids[0];
+  }
+  if (REPLY_PREFIX.test(m.subject) && baseSubject(m.subject)) {
+    // The other people of the exchange: I am in every mail, I do not make two mails one conversation.
+    const me = (mailAccountInfo(userId)?.email ?? "").toLowerCase();
+    const people = [m.from, ...m.to].map((a) => a.toLowerCase()).filter((a) => a && a !== me);
+    const since = new Date(Date.parse(m.date) - SUBJECT_WINDOW_MS).toISOString();
+    const rows = db()
+      .prepare("select thread_id, subject, from_address, recipients from mail_messages where user_id = ? and thread_id is not null and date >= ? and date <= ? order by date desc limit 400")
+      .all(userId, since, m.date) as { thread_id: string; subject: string; from_address: string; recipients: string }[];
+    const base = baseSubject(m.subject);
+    for (const r of rows) {
+      if (baseSubject(r.subject) !== base) continue;
+      const { to = [], cc = [] } = JSON.parse(r.recipients || "{}") as { to?: MailAddress[]; cc?: MailAddress[] };
+      const theirs = [r.from_address, ...to.map((x) => x.address), ...cc.map((x) => x.address)].map((a) => (a ?? "").toLowerCase());
+      if (people.some((p) => theirs.includes(p))) return r.thread_id;
+    }
+  }
+  return m.messageId ?? `${m.folder}:${m.uid}`;
+}
+
+/** Replies that arrived before the mail they answer: they join its conversation now. */
+function adopt(userId: string, messageId: string | null, thread: string) {
+  if (messageId && messageId !== thread) db().prepare("update mail_messages set thread_id = ? where user_id = ? and thread_id = ?").run(thread, userId, messageId);
+}
+
+/** Mails copied before conversations existed get theirs, oldest first. */
+export function ensureThreads(userId: string) {
+  const rows = db()
+    .prepare("select folder, uid, message_id, in_reply_to, refs, subject, from_address, recipients, date from mail_messages where user_id = ? and thread_id is null order by date asc")
+    .all(userId) as { folder: string; uid: number; message_id: string | null; in_reply_to: string | null; refs: string | null; subject: string; from_address: string; recipients: string; date: string }[];
+  if (!rows.length) return;
+  const set = db().prepare("update mail_messages set thread_id = ? where user_id = ? and folder = ? and uid = ?");
+  db().transaction(() => {
+    for (const r of rows) {
+      const { to = [], cc = [] } = JSON.parse(r.recipients || "{}") as { to?: MailAddress[]; cc?: MailAddress[] };
+      const thread = threadOf(userId, { folder: r.folder, uid: r.uid, messageId: r.message_id, inReplyTo: r.in_reply_to, refs: r.refs, subject: r.subject, from: r.from_address, to: [...to, ...cc].map((x) => x.address), date: r.date });
+      set.run(thread, userId, r.folder, r.uid);
+      adopt(userId, r.message_id, thread);
+    }
+  })();
+}
+
+/** Folders a conversation does not reach into, unless one is the folder being looked at. */
+function outsideFolders(userId: string, folder: string): string[] {
+  return ["\\Trash", "\\Junk"].map((u) => specialFolder(userId, u)).filter((f): f is string => !!f && f !== folder);
+}
+
+/** The conversations of a folder, newest first, each shown with its newest mail of the folder. */
+export function listMailThreads(userId: string, folder: string, before?: { date: string; uid: number }, limit = MAIL_PAGE): { messages: MailSummary[]; hasMore: boolean } {
+  ensureThreads(userId);
+  const rows = db()
+    .prepare(
+      `select * from (
+         select m.*, row_number() over (partition by thread_id order by date desc, uid desc) as rn,
+                sum(1 - seen) over (partition by thread_id) as thread_unread,
+                group_concat(uid) over (partition by thread_id) as thread_uids
+         from mail_messages m where user_id = ? and folder = ?
+       ) where rn = 1 ${before ? "and (date < ? or (date = ? and uid < ?))" : ""}
+       order by date desc, uid desc limit ?`,
+    )
+    .all(...[userId, folder, ...(before ? [before.date, before.date, before.uid] : []), limit + 1]) as (MessageRow & { thread_id: string; thread_unread: number; thread_uids: string })[];
+  const page = rows.slice(0, limit);
+  const me = (mailAccountInfo(userId)?.email ?? "").toLowerCase();
+  const outside = outsideFolders(userId, folder);
+  const members = page.length
+    ? (db()
+        .prepare(
+          `select thread_id, message_id, from_name, from_address from mail_messages
+           where user_id = ? and thread_id in (${page.map(() => "?").join(",")}) ${outside.length ? `and folder not in (${outside.map(() => "?").join(",")})` : ""}
+           order by date asc`,
+        )
+        .all(userId, ...page.map((r) => r.thread_id), ...outside) as { thread_id: string; message_id: string | null; from_name: string; from_address: string }[])
+    : [];
+  return {
+    messages: page.map((r) => {
+      const mine = members.filter((x) => x.thread_id === r.thread_id);
+      // The same mail can sit in two folders (copied, or a Gmail label): counted once.
+      const count = new Set(mine.map((x, i) => x.message_id ?? `#${i}`)).size;
+      const participants = [...new Set(mine.map((x) => (x.from_address.toLowerCase() === me ? "moi" : x.from_name || x.from_address)))];
+      const uids = r.thread_uids.split(",").map(Number);
+      return { ...toSummary(r), thread: { id: r.thread_id, count: Math.max(count, uids.length), unread: r.thread_unread, uids, participants } };
+    }),
+    hasMore: rows.length > limit,
+  };
+}
+
+/** Every mail of the conversation of this one, oldest first (not from Trash or Spam unless looking there). */
+export function threadMessages(userId: string, folder: string, uid: number): MailSummary[] {
+  ensureThreads(userId);
+  const head = db().prepare("select thread_id from mail_messages where user_id = ? and folder = ? and uid = ?").get(userId, folder, uid) as { thread_id: string | null } | undefined;
+  if (!head?.thread_id) return mailSummaries(userId, folder, [uid]);
+  const outside = outsideFolders(userId, folder);
+  const rows = db()
+    .prepare(`select * from mail_messages where user_id = ? and thread_id = ? ${outside.length ? `and folder not in (${outside.map(() => "?").join(",")})` : ""} order by date asc, uid asc`)
+    .all(userId, head.thread_id, ...outside) as MessageRow[];
+  // A mail in two folders: the copy of the folder being looked at wins.
+  const seen = new Map<string, MessageRow>();
+  for (const r of rows) {
+    const key = r.message_id ?? `${r.folder}:${r.uid}`;
+    const had = seen.get(key);
+    if (!had || (r.folder === folder && had.folder !== folder)) seen.set(key, r);
+  }
+  return [...seen.values()].sort((a, b) => a.date.localeCompare(b.date) || a.uid - b.uid).map(toSummary);
 }
 
 export function setPreviews(userId: string, folder: string, previews: Map<number, string>) {

@@ -198,6 +198,10 @@ export function db() {
   addColumn("mail_accounts", "signature", "text not null default ''");
   // Mails: which new mails notify (all, known = only people I have written to, off).
   addColumn("mail_accounts", "notify", "text not null default 'all'");
+  // Mails: the conversation a mail belongs to (see threadOf in mail/store.ts), filled on insert.
+  addColumn("mail_messages", "thread_id", "text");
+  conn.exec("create index if not exists mail_messages_thread on mail_messages (user_id, thread_id)");
+  conn.exec("create index if not exists mail_messages_mid on mail_messages (user_id, message_id)");
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;

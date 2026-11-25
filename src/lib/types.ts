@@ -124,7 +124,22 @@ export type MailAttachment = { name: string; type: string; size: number; part: s
  */
 export type MailContent = MailSummary & { text: string; html: string | null; remoteImages: boolean; attachmentList: MailAttachment[]; trusted: boolean };
 
+/** A conversation, as a row of the list: shown with its newest mail of the folder. */
+export type MailThreadInfo = {
+  id: string;
+  /** Mails in the whole conversation (the folder, Sent, Archives…; not Trash or Spam). */
+  count: number;
+  /** Unread mails of the conversation in this folder. */
+  unread: number;
+  /** The uids of the conversation's mails in this folder: what an action on the row applies to. */
+  uids: number[];
+  /** Who wrote, oldest first ("moi" for my own mails). */
+  participants: string[];
+};
+
 export type MailSummary = {
+  /** Only in the "Par conversation" view. */
+  thread?: MailThreadInfo;
   folder: string;
   uid: number;
   messageId: string | null;

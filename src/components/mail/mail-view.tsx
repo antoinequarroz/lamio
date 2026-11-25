@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, Loader2, Mail, MailOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
+import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, MailOpen, MessagesSquare, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,6 +14,7 @@ import type { ComposeMode, MailAccountInfo, MailAction, MailAttachment, MailCont
 import { api, cn, fileSize } from "@/lib/utils";
 
 const PAGE = 50;
+const THREADS_KEY = "mail-threads";
 
 const FOLDER_ICONS: Record<string, typeof Inbox> = { "\\Inbox": Inbox, "\\Sent": Send, "\\Drafts": FileText, "\\Archive": Archive, "\\Junk": ShieldAlert, "\\Trash": Trash2, "\\Flagged": Flag };
 
@@ -54,6 +55,21 @@ export function MailView() {
   const [search, setSearch] = useState<MailSearch | null>(null);
   const [results, setResults] = useState<MailSummary[]>([]);
   const [searching, setSearching] = useState<"" | "local" | "server">("");
+  // "Par conversation" (one row per exchange) or "Mail par mail": a choice kept on this device.
+  const [threaded, setThreaded] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(THREADS_KEY) === "off") setThreaded(false);
+    } catch {}
+  }, []);
+  const toggleThreads = useCallback(() => {
+    setThreaded((t) => {
+      try {
+        localStorage.setItem(THREADS_KEY, t ? "off" : "on");
+      } catch {}
+      return !t;
+    });
+  }, []);
   // Mails waiting to leave or just sent: to reopen them on "Annuler" or when sending failed.
   const outgoing = useRef(new Map<string, SendState>());
 
@@ -82,12 +98,15 @@ export function MailView() {
     setFolders(f.folders);
   }, []);
 
-  const loadMessages = useCallback(async (path: string, limit = PAGE) => {
-    const r = await api<{ messages: MailSummary[]; hasMore: boolean }>(`/api/mail/messages?folder=${encodeURIComponent(path)}&limit=${Math.min(200, limit)}`);
-    setMessages(r.messages);
-    setHasMore(r.hasMore);
-    setLoading(false);
-  }, []);
+  const loadMessages = useCallback(
+    async (path: string, limit = PAGE) => {
+      const r = await api<{ messages: MailSummary[]; hasMore: boolean }>(`/api/mail/messages?folder=${encodeURIComponent(path)}&limit=${Math.min(200, limit)}${threaded ? "&threads=1" : ""}`);
+      setMessages(r.messages);
+      setHasMore(r.hasMore);
+      setLoading(false);
+    },
+    [threaded],
+  );
 
   useEffect(() => {
     void loadFolders().catch(() => setAccount({ enabled: false, account: null }));
@@ -131,10 +150,10 @@ export function MailView() {
   const more = useCallback(async () => {
     const last = messages.at(-1);
     if (!last || !hasMore) return;
-    const r = await api<{ messages: MailSummary[]; hasMore: boolean }>(`/api/mail/messages?folder=${encodeURIComponent(folder)}&before=${encodeURIComponent(`${last.date}|${last.uid}`)}`);
+    const r = await api<{ messages: MailSummary[]; hasMore: boolean }>(`/api/mail/messages?folder=${encodeURIComponent(folder)}&before=${encodeURIComponent(`${last.date}|${last.uid}`)}${threaded ? "&threads=1" : ""}`);
     setMessages((m) => [...m, ...r.messages.filter((x) => !m.some((y) => y.uid === x.uid))]);
     setHasMore(r.hasMore);
-  }, [messages, hasMore, folder]);
+  }, [messages, hasMore, folder, threaded]);
 
   // Search: the local copy at once, then the mailbox itself (full text, old mails) to complete.
   const searchKey = search && (search.q.trim() || search.unread || search.attachments || search.within) ? JSON.stringify(search) : "";
@@ -199,12 +218,14 @@ export function MailView() {
    * A move can be undone for a few seconds ("Annuler").
    */
   const act = useCallback(
-    async (uids: number[], action: MailAction) => {
+    async (rows: number[], action: MailAction, exact = false) => {
+      // A conversation's row stands for all its mails of the folder (the flag stays on the one shown).
+      const uids = exact || !threaded || action.type === "flagged" ? rows : [...new Set(rows.flatMap((u) => messages.find((m) => m.uid === u)?.thread?.uids ?? [u]))];
       if (!uids.length) return;
       if (action.type === "delete" && !window.confirm(uids.length > 1 ? `Supprimer définitivement ces ${uids.length} mails ?` : "Supprimer définitivement ce mail ?")) return;
       const from = folder;
       const leaves = action.type !== "seen" && action.type !== "flagged";
-      const hit = (m: MailSummary) => m.folder === from && uids.includes(m.uid);
+      const hit = (m: MailSummary) => m.folder === from && (uids.includes(m.uid) || (leaves && !!m.thread?.uids.some((u) => uids.includes(u))));
       if (leaves) {
         // The mail open goes away: the next one opens, like in Mail (in the results while searching).
         if (openUid && uids.includes(openUid)) {
@@ -216,7 +237,11 @@ export function MailView() {
         setMessages((list) => list.filter((m) => !hit(m)));
         setResults((list) => list.filter((m) => !hit(m)));
       } else {
-        const update = (list: MailSummary[]) => list.map((m) => (hit(m) ? { ...m, [action.type]: action.value } : m));
+        const update = (list: MailSummary[]) =>
+          list.map((m) => {
+            const thread = m.thread && action.type === "seen" && m.thread.uids.some((u) => uids.includes(u)) ? { ...m.thread, unread: action.value ? 0 : m.thread.uids.length } : m.thread;
+            return hit(m) ? { ...m, [action.type]: action.value, thread } : thread !== m.thread ? { ...m, thread } : m;
+          });
         setMessages(update);
         setResults(update);
       }
@@ -249,7 +274,7 @@ export function MailView() {
         void loadMessages(from, shown.current).catch(() => {});
       }
     },
-    [folder, openUid, messages, results, search, go, loadMessages],
+    [folder, openUid, messages, results, search, go, loadMessages, threaded],
   );
 
   const toggleSelect = useCallback(
@@ -353,8 +378,10 @@ export function MailView() {
   }, []);
 
   const markSeen = useCallback(
-    (uid: number) => {
-      const seen = (list: MailSummary[]) => list.map((x) => (x.folder === folder && x.uid === uid ? { ...x, seen: true } : x));
+    (uid: number, all?: number[]) => {
+      const uids = all ?? [uid];
+      const seen = (list: MailSummary[]) =>
+        list.map((x) => (x.folder === folder && (uids.includes(x.uid) || x.thread?.uids.some((u) => uids.includes(u))) ? { ...x, seen: true, thread: x.thread && (all ? { ...x.thread, unread: 0 } : { ...x.thread, unread: Math.max(0, x.thread.unread - (x.seen ? 0 : 1)) }) } : x));
       setMessages(seen);
       setResults(seen);
     },
@@ -411,11 +438,19 @@ export function MailView() {
             ))}
           </select>
           <span className="truncate text-[14px] font-medium max-lg:hidden">{current?.name ?? folder}</span>
-          {current && current.unread > 0 && <span className="tabular text-[12px] text-ink-3 max-lg:hidden">{current.unread} non lus</span>}
+          {current && current.unread > 0 && <span className="tabular shrink-0 text-[12px] whitespace-nowrap text-ink-3 max-xl:hidden">{current.unread} non lus</span>}
           <span className="ml-auto flex items-center gap-1" title={info.live ? "Temps réel actif : les nouveaux mails arrivent en direct" : "Temps réel en cours de connexion"}>
             <Zap className={cn("size-3.5", info.live ? "text-accent" : "text-ink-3")} />
-            <span className="text-[11.5px] text-ink-3 max-sm:hidden">{info.live ? "En direct" : "Connexion…"}</span>
+            <span className="text-[11.5px] whitespace-nowrap text-ink-3 max-xl:hidden">{info.live ? "En direct" : "Connexion…"}</span>
           </span>
+          <button
+            onClick={toggleThreads}
+            aria-label={threaded ? "Afficher mail par mail" : "Regrouper par conversation"}
+            title={threaded ? "Par conversation · passer à mail par mail" : "Mail par mail · regrouper par conversation"}
+            className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink"
+          >
+            {threaded ? <MessagesSquare className="size-4" /> : <List className="size-4" />}
+          </button>
           <button onClick={openSearch} aria-label="Rechercher" title="Rechercher (/)" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
             <Search className="size-4" />
           </button>
@@ -475,8 +510,9 @@ export function MailView() {
             junk={isJunk}
             busy={!!compose || !!moving || selected.size > 0}
             onCompose={setCompose}
-            onAction={(a) => void act([openUid], a)}
-            onMove={() => setMoving([openUid])}
+            threaded={threaded && !search}
+            onAction={(a, uids) => void act(uids ?? [openUid], a, !!uids)}
+            onMove={(uids) => setMoving(uids ?? [openUid])}
             onBack={() => go(folder, null)}
             onSeen={markSeen}
           /> : <EmptyReader count={current?.unread ?? 0} />}
@@ -835,6 +871,8 @@ function MessageList({
           const active = !!open && m.folder === open.folder && m.uid === open.uid;
           const checked = selected.has(m.uid);
           const place = folders?.find((f) => f.path === m.folder);
+          // A conversation is unread while one of its mails of the folder is.
+          const unread = m.thread ? m.thread.unread > 0 : !m.seen;
           return (
             <li
               key={keyOf(m)}
@@ -861,14 +899,15 @@ function MessageList({
                 onClick={(e) => (onSelect && (e.metaKey || e.ctrlKey || e.shiftKey || selected.size) ? onSelect(m.uid, e.shiftKey) : onOpen(m))}
                 className="relative flex w-full flex-col gap-0.5 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset md:pl-8"
               >
-                {!m.seen && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
+                {unread && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
                 <span className="flex items-baseline gap-2">
-                  <span className={cn("min-w-0 flex-1 truncate text-[13.5px]", m.seen ? "text-ink-2" : "font-semibold text-ink")}>{who(m.from)}</span>
+                  <span className={cn("min-w-0 flex-1 truncate text-[13.5px]", unread ? "font-semibold text-ink" : "text-ink-2")}>{m.thread && m.thread.count > 1 ? m.thread.participants.join(", ") : who(m.from)}</span>
+                  {m.thread && m.thread.count > 1 && <span className="tabular shrink-0 rounded-full bg-ink/[0.07] px-1.5 text-[11px] leading-[17px] font-medium text-ink-2" aria-label={`${m.thread.count} mails`}>{m.thread.count}</span>}
                   {m.flagged && <Flag className="size-3 shrink-0 self-center fill-danger text-danger" />}
                   {m.attachments && <Paperclip className="size-3 shrink-0 self-center text-ink-3" />}
-                  <span className={cn("tabular shrink-0 text-[11.5px]", m.seen ? "text-ink-3" : "font-medium text-accent")}>{shortDate(m.date)}</span>
+                  <span className={cn("tabular shrink-0 text-[11.5px]", unread ? "font-medium text-accent" : "text-ink-3")}>{shortDate(m.date)}</span>
                 </span>
-                <span className={cn("truncate text-[13px]", m.seen ? "text-ink-2" : "font-medium text-ink")}>{m.subject || "(sans objet)"}</span>
+                <span className={cn("truncate text-[13px]", unread ? "font-medium text-ink" : "text-ink-2")}>{m.subject || "(sans objet)"}</span>
                 <span className="line-clamp-2 text-[12.5px] leading-snug text-ink-3">{m.preview || " "}</span>
                 {folders && (
                   <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3">
@@ -921,6 +960,7 @@ function Reader({
   trash,
   junk,
   busy,
+  threaded,
   onCompose,
   onAction,
   onMove,
@@ -936,23 +976,21 @@ function Reader({
   junk: boolean;
   /** Writing, moving or selecting: the reader's keys are off. */
   busy: boolean;
+  /** "Par conversation": the whole exchange is shown, and the actions apply to it. */
+  threaded: boolean;
   onCompose: (init: ComposeInit) => void;
-  onAction: (action: MailAction) => void;
-  onMove: () => void;
+  /** uids: the mails of the conversation in this folder, when the action is for all of them. */
+  onAction: (action: MailAction, uids?: number[]) => void;
+  onMove: (uids?: number[]) => void;
   onBack: () => void;
-  onSeen: (uid: number) => void;
+  onSeen: (uid: number, all?: number[]) => void;
 }) {
   const [mail, setMail] = useState<MailContent | null>(null);
   const [error, setError] = useState("");
-  const [showImages, setShowImages] = useState(false);
-  const [asText, setAsText] = useState(false);
-  const [preview, setPreview] = useState<MailAttachment | null>(null);
+  const [members, setMembers] = useState<MailSummary[]>([]);
 
   useEffect(() => {
     let live = true;
-    setShowImages(false);
-    setAsText(false);
-    setPreview(null);
     api<{ mail: MailContent }>(`/api/mail/message?folder=${encodeURIComponent(folder)}&uid=${uid}`).then(
       (r) => {
         if (!live) return;
@@ -966,27 +1004,43 @@ function Reader({
     };
   }, [folder, uid, onSeen]);
 
-  const trust = async (trusted: boolean) => {
-    if (!mail) return;
-    try {
-      await api("/api/mail/trust", { method: "POST", json: { address: mail.from.address, trusted } });
-      setMail({ ...mail, trusted });
-      if (!trusted) setShowImages(false);
-      toast.success(trusted ? `Les images de ${mail.from.address} s'afficheront toujours` : "Les images de cet expéditeur seront de nouveau bloquées");
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
+  // The conversation around this mail; its other unread mails are read too once it is open.
+  useEffect(() => {
+    if (!threaded) return setMembers([]);
+    let live = true;
+    api<{ messages: MailSummary[] }>(`/api/mail/thread?folder=${encodeURIComponent(folder)}&uid=${uid}`).then(
+      (r) => {
+        if (!live) return;
+        setMembers(r.messages);
+        const unread = r.messages.filter((m) => !m.seen && !(m.folder === folder && m.uid === uid));
+        for (const f of new Set(unread.map((m) => m.folder))) {
+          void api("/api/mail/actions", { method: "POST", json: { folder: f, uids: unread.filter((m) => m.folder === f).map((m) => m.uid), action: { type: "seen", value: true } } }).catch(() => {});
+        }
+        if (unread.length) onSeen(uid, r.messages.filter((m) => m.folder === folder).map((m) => m.uid));
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [threaded, folder, uid, onSeen]);
+
+  const conversation = threaded && members.length > 1;
+  const folderUids = useMemo(() => {
+    const own = members.filter((m) => m.folder === folder).map((m) => m.uid);
+    return own.includes(uid) ? own : [uid];
+  }, [members, folder, uid]);
 
   const run = useCallback(
     (a: MailAction) => {
       if (a.type === "flagged") setMail((m) => (m ? { ...m, flagged: a.value } : m));
-      onAction(a);
+      onAction(a, conversation && a.type !== "flagged" ? folderUids : undefined);
       // Unread again: back to the list, or opening it would mark it read at once.
       if (a.type === "seen" && !a.value) onBack();
     },
-    [onAction, onBack],
+    [onAction, onBack, conversation, folderUids],
   );
+  const move = useCallback(() => onMove(conversation ? folderUids : undefined), [onMove, conversation, folderUids]);
 
   // r / a / f: reply, reply to all, forward. e: archive, #: trash, u: unread, s: flag, v: move, !: spam.
   useEffect(() => {
@@ -1004,12 +1058,12 @@ function Reader({
         run(action);
       } else if (e.key === "v") {
         e.preventDefault();
-        onMove();
+        move();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mail, busy, me, onCompose, run, onMove, trash, junk, isDrafts]);
+  }, [mail, busy, me, onCompose, run, move, trash, junk, isDrafts]);
 
   const back = (
     <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
@@ -1033,23 +1087,23 @@ function Reader({
       </Centered>
     );
 
-  const recipients = [...mail.to, ...mail.cc];
+  const n = conversation ? ` la conversation (${folderUids.length > 1 ? `${folderUids.length} mails` : "1 mail"})` : "";
   return (
     <article className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line px-3 md:px-6">
         {back}
         <span className="min-w-0 truncate text-[12px] text-ink-3 max-sm:hidden">
-          {new Date(mail.date).toLocaleString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+          {conversation ? `Conversation · ${members.length} mails` : new Date(mail.date).toLocaleString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
         </span>
         <span className="flex-1" />
-        <Action label="Archiver (E)" Icon={Archive} onClick={() => run({ type: "archive" })} />
+        <Action label={`Archiver${n} (E)`} Icon={Archive} onClick={() => run({ type: "archive" })} />
         {trash ? (
-          <Action label="Supprimer définitivement (#)" Icon={Trash2} onClick={() => run({ type: "delete" })} />
+          <Action label={`Supprimer définitivement${n} (#)`} Icon={Trash2} onClick={() => run({ type: "delete" })} />
         ) : (
-          <Action label="Corbeille (#)" Icon={Trash2} onClick={() => run({ type: "trash" })} />
+          <Action label={`Corbeille${n ? ` :${n}` : ""} (#)`} Icon={Trash2} onClick={() => run({ type: "trash" })} />
         )}
         {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} />}
-        <Action label="Déplacer (V)" Icon={FolderInput} onClick={onMove} />
+        <Action label={`Déplacer${n} (V)`} Icon={FolderInput} onClick={move} />
         <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} />
         <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
         <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
@@ -1068,104 +1122,193 @@ function Reader({
       <div className="scroll-thin flex-1 overflow-y-auto px-6 py-6 max-md:px-4">
         <div className="mx-auto max-w-[720px]">
           <h2 className="text-[22px] leading-tight font-semibold tracking-[-0.01em]">{mail.subject || "(sans objet)"}</h2>
-          <div className="mt-4 flex items-start gap-3">
-            <Avatar id={mail.from.address || mail.from.name} name={who(mail.from)} size="lg" />
-            <div className="min-w-0 flex-1 text-[13px] leading-snug">
-              <p>
-                <span className="font-semibold">{who(mail.from)}</span>
-                {mail.from.name && mail.from.address && <span className="text-ink-3"> &lt;{mail.from.address}&gt;</span>}
-              </p>
-              {recipients.length > 0 && (
-                <p className="truncate text-ink-3" title={recipients.map((r) => r.address).join(", ")}>
-                  À {recipients.map(who).join(", ")}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {mail.attachmentList.length > 0 && (
-            <ul className="mt-5 flex flex-wrap gap-2">
-              {mail.attachmentList.map((a) => {
-                const image = PREVIEW_IMAGES.has(a.type);
-                const pdf = a.type === "application/pdf";
-                const Icon = image ? ImageIcon : pdf ? FileText : File;
-                const label = (
-                  <>
-                    <Icon className="size-4 shrink-0 text-ink-3" />
-                    <span className="min-w-0 truncate">{a.name}</span>
-                    {a.size > 0 && <span className="shrink-0 text-ink-3">{fileSize(a.size)}</span>}
-                  </>
-                );
-                const chip = "press flex max-w-[280px] items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[12.5px] hover:border-line-strong";
-                return (
-                  <li key={a.part} className="flex items-center">
-                    {image ? (
-                      <button onClick={() => setPreview(a)} className={cn(chip, "rounded-r-none")} title={`Voir ${a.name}`}>
-                        {label}
-                      </button>
-                    ) : pdf ? (
-                      <a href={attachmentUrl(mail, a, true)} target="_blank" rel="noreferrer" className={cn(chip, "rounded-r-none")} title={`Ouvrir ${a.name}`}>
-                        {label}
-                      </a>
-                    ) : (
-                      <a href={attachmentUrl(mail, a)} download={a.name} className={chip} title={`Télécharger ${a.name}`}>
-                        {label}
-                        <Download className="size-3.5 shrink-0 text-ink-3" />
-                      </a>
-                    )}
-                    {(image || pdf) && (
-                      <a href={attachmentUrl(mail, a)} download={a.name} aria-label={`Télécharger ${a.name}`} className="press flex self-stretch items-center rounded-r-lg border border-l-0 border-line bg-surface-2 px-2 text-ink-3 hover:border-line-strong hover:text-ink">
-                        <Download className="size-3.5" />
-                      </a>
-                    )}
+          {conversation ? (
+            <ol className="mt-4 flex flex-col gap-2">
+              {members.map((m) =>
+                m.folder === folder && m.uid === uid ? (
+                  <li key={keyOf(m)} className="rounded-xl border border-line-strong bg-surface p-4 max-md:p-3">
+                    <MailHead mail={mail} date />
+                    <MailBody mail={mail} onChange={setMail} />
                   </li>
-                );
-              })}
-            </ul>
-          )}
-
-          {mail.html && !asText ? (
-            <div className="mt-6">
-              {mail.remoteImages && !(showImages || mail.trusted) && (
-                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
-                  <ShieldAlert className="size-4 shrink-0 text-ink-3" />
-                  <span className="min-w-[12rem] flex-1">Images bloquées : elles peuvent dire à l&apos;expéditeur quand et où tu ouvres ce mail.</span>
-                  <button onClick={() => setShowImages(true)} className="press font-medium text-accent hover:underline">
-                    Afficher les images
-                  </button>
-                  {mail.from.address && (
-                    <button onClick={() => void trust(true)} className="press font-medium text-accent hover:underline">
-                      Toujours pour cet expéditeur
-                    </button>
-                  )}
-                </div>
+                ) : (
+                  <ThreadItem key={keyOf(m)} summary={m} me={me} />
+                ),
               )}
-              <MailFrame html={mail.html} showImages={showImages || mail.trusted} title={mail.subject || "Mail"} />
-              <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3">
-                <button onClick={() => setAsText(true)} className="press flex items-center gap-1 hover:text-ink">
-                  <FileText className="size-3.5" /> Voir en texte
-                </button>
-                {mail.trusted && mail.remoteImages && (
-                  <button onClick={() => void trust(false)} className="press flex items-center gap-1 hover:text-ink">
-                    <Eye className="size-3.5" /> Images toujours affichées pour {mail.from.address} · ne plus les afficher
-                  </button>
-                )}
-              </p>
-            </div>
+            </ol>
           ) : (
             <>
-              <div className="mt-6 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap text-ink">{mail.text ? <Linkified text={mail.text} /> : <span className="text-ink-3">(mail sans texte)</span>}</div>
-              {mail.html && (
-                <button onClick={() => setAsText(false)} className="press mt-6 flex items-center gap-1 text-[12px] text-ink-3 hover:text-ink">
-                  <Eye className="size-3.5" /> Voir la mise en page d&apos;origine
-                </button>
-              )}
+              <div className="mt-4">
+                <MailHead mail={mail} />
+              </div>
+              <MailBody mail={mail} onChange={setMail} />
             </>
           )}
         </div>
       </div>
-      {preview && <ImagePreview src={attachmentUrl(mail, preview, true)} name={preview.name} download={attachmentUrl(mail, preview)} onClose={() => setPreview(null)} />}
     </article>
+  );
+}
+
+/** Who wrote, to whom, and when (in a conversation). */
+function MailHead({ mail, date }: { mail: Pick<MailSummary, "from" | "to" | "cc" | "date">; date?: boolean }) {
+  const recipients = [...mail.to, ...mail.cc];
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar id={mail.from.address || mail.from.name} name={who(mail.from)} size="lg" />
+      <div className="min-w-0 flex-1 text-[13px] leading-snug">
+        <p className="flex items-baseline gap-2">
+          <span className="min-w-0 truncate">
+            <span className="font-semibold">{who(mail.from)}</span>
+            {mail.from.name && mail.from.address && <span className="text-ink-3"> &lt;{mail.from.address}&gt;</span>}
+          </span>
+          {date && <span className="tabular ml-auto shrink-0 text-[12px] text-ink-3">{new Date(mail.date).toLocaleString("fr-CH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>}
+        </p>
+        {recipients.length > 0 && (
+          <p className="truncate text-ink-3" title={recipients.map((r) => r.address).join(", ")}>
+            À {recipients.map(who).join(", ")}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Another mail of the conversation: one line, opened on a click (read from the copy or the server). */
+function ThreadItem({ summary, me }: { summary: MailSummary; me: string }) {
+  const [open, setOpen] = useState(false);
+  const [mail, setMail] = useState<MailContent | null>(null);
+  const [error, setError] = useState("");
+  const mine = summary.from.address.toLowerCase() === me.toLowerCase();
+
+  useEffect(() => {
+    if (!open || mail) return;
+    api<{ mail: MailContent }>(`/api/mail/message?folder=${encodeURIComponent(summary.folder)}&uid=${summary.uid}`).then(
+      (r) => setMail(r.mail),
+      (e: Error) => setError(e.message),
+    );
+  }, [open, mail, summary.folder, summary.uid]);
+
+  return (
+    <li className={cn("rounded-xl border border-line", open ? "bg-surface p-4 max-md:p-3" : "bg-surface-2/60 hover:border-line-strong")}>
+      {open ? (
+        <>
+          <button onClick={() => setOpen(false)} className="w-full text-left" aria-expanded>
+            <MailHead mail={summary} date />
+          </button>
+          {mail ? <MailBody mail={mail} onChange={setMail} /> : error ? <p className="mt-4 text-[13px] text-ink-3">{error}</p> : <Loader2 className="mt-4 size-4 animate-spin text-ink-3" />}
+        </>
+      ) : (
+        <button onClick={() => setOpen(true)} aria-expanded={false} className="flex w-full items-center gap-3 px-4 py-2.5 text-left max-md:px-3">
+          <Avatar id={summary.from.address || summary.from.name} name={who(summary.from)} size="sm" />
+          <span className="w-28 shrink-0 truncate text-[13px] font-medium">{mine ? "Moi" : who(summary.from)}</span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">{summary.preview || summary.subject}</span>
+          <span className="tabular shrink-0 text-[11.5px] text-ink-3">{shortDate(summary.date)}</span>
+        </button>
+      )}
+    </li>
+  );
+}
+
+/** The files and the text (or the page) of a mail. */
+function MailBody({ mail, onChange }: { mail: MailContent; onChange: (mail: MailContent) => void }) {
+  const [showImages, setShowImages] = useState(false);
+  const [asText, setAsText] = useState(false);
+  const [preview, setPreview] = useState<MailAttachment | null>(null);
+
+  const trust = async (trusted: boolean) => {
+    try {
+      await api("/api/mail/trust", { method: "POST", json: { address: mail.from.address, trusted } });
+      onChange({ ...mail, trusted });
+      if (!trusted) setShowImages(false);
+      toast.success(trusted ? `Les images de ${mail.from.address} s'afficheront toujours` : "Les images de cet expéditeur seront de nouveau bloquées");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  return (
+    <>
+      {mail.attachmentList.length > 0 && (
+        <ul className="mt-5 flex flex-wrap gap-2">
+          {mail.attachmentList.map((a) => {
+            const image = PREVIEW_IMAGES.has(a.type);
+            const pdf = a.type === "application/pdf";
+            const Icon = image ? ImageIcon : pdf ? FileText : File;
+            const label = (
+              <>
+                <Icon className="size-4 shrink-0 text-ink-3" />
+                <span className="min-w-0 truncate">{a.name}</span>
+                {a.size > 0 && <span className="shrink-0 text-ink-3">{fileSize(a.size)}</span>}
+              </>
+            );
+            const chip = "press flex max-w-[280px] items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[12.5px] hover:border-line-strong";
+            return (
+              <li key={a.part} className="flex items-center">
+                {image ? (
+                  <button onClick={() => setPreview(a)} className={cn(chip, "rounded-r-none")} title={`Voir ${a.name}`}>
+                    {label}
+                  </button>
+                ) : pdf ? (
+                  <a href={attachmentUrl(mail, a, true)} target="_blank" rel="noreferrer" className={cn(chip, "rounded-r-none")} title={`Ouvrir ${a.name}`}>
+                    {label}
+                  </a>
+                ) : (
+                  <a href={attachmentUrl(mail, a)} download={a.name} className={chip} title={`Télécharger ${a.name}`}>
+                    {label}
+                    <Download className="size-3.5 shrink-0 text-ink-3" />
+                  </a>
+                )}
+                {(image || pdf) && (
+                  <a href={attachmentUrl(mail, a)} download={a.name} aria-label={`Télécharger ${a.name}`} className="press flex self-stretch items-center rounded-r-lg border border-l-0 border-line bg-surface-2 px-2 text-ink-3 hover:border-line-strong hover:text-ink">
+                    <Download className="size-3.5" />
+                  </a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {mail.html && !asText ? (
+        <div className="mt-6">
+          {mail.remoteImages && !(showImages || mail.trusted) && (
+            <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-[12.5px] text-ink-2">
+              <ShieldAlert className="size-4 shrink-0 text-ink-3" />
+              <span className="min-w-[12rem] flex-1">Images bloquées : elles peuvent dire à l&apos;expéditeur quand et où tu ouvres ce mail.</span>
+              <button onClick={() => setShowImages(true)} className="press font-medium text-accent hover:underline">
+                Afficher les images
+              </button>
+              {mail.from.address && (
+                <button onClick={() => void trust(true)} className="press font-medium text-accent hover:underline">
+                  Toujours pour cet expéditeur
+                </button>
+              )}
+            </div>
+          )}
+          <MailFrame html={mail.html} showImages={showImages || mail.trusted} title={mail.subject || "Mail"} />
+          <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-3">
+            <button onClick={() => setAsText(true)} className="press flex items-center gap-1 hover:text-ink">
+              <FileText className="size-3.5" /> Voir en texte
+            </button>
+            {mail.trusted && mail.remoteImages && (
+              <button onClick={() => void trust(false)} className="press flex items-center gap-1 hover:text-ink">
+                <Eye className="size-3.5" /> Images toujours affichées pour {mail.from.address} · ne plus les afficher
+              </button>
+            )}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-6 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap text-ink">{mail.text ? <Linkified text={mail.text} /> : <span className="text-ink-3">(mail sans texte)</span>}</div>
+          {mail.html && (
+            <button onClick={() => setAsText(false)} className="press mt-6 flex items-center gap-1 text-[12px] text-ink-3 hover:text-ink">
+              <Eye className="size-3.5" /> Voir la mise en page d&apos;origine
+            </button>
+          )}
+        </>
+      )}
+      {preview && <ImagePreview src={attachmentUrl(mail, preview, true)} name={preview.name} download={attachmentUrl(mail, preview)} onClose={() => setPreview(null)} />}
+    </>
   );
 }
 

@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "@/server/auth";
 import { fail, unauthorized } from "@/server/http";
-import { listMailMessages, MAIL_PAGE } from "@/server/mail/store";
+import { listMailMessages, listMailThreads, MAIL_PAGE } from "@/server/mail/store";
 
 export const dynamic = "force-dynamic";
 
 /**
  * The newest mails of a folder, from the local copy (instant).
- * ?folder=INBOX&before=<date ISO>|<uid> for the next page, &limit= up to 200.
+ * ?folder=INBOX&before=<date ISO>|<uid> for the next page, &limit= up to 200,
+ * &threads=1 for one row per conversation.
  */
 export async function GET(req: Request) {
   const me = await currentUser();
@@ -23,5 +24,5 @@ export async function GET(req: Request) {
     before = { date, uid: Number(uid) };
   }
   const limit = Math.min(200, Math.max(1, Number(params.get("limit")) || MAIL_PAGE));
-  return NextResponse.json(listMailMessages(me.id, folder, before, limit));
+  return NextResponse.json((params.get("threads") === "1" ? listMailThreads : listMailMessages)(me.id, folder, before, limit));
 }
