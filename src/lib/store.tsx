@@ -101,13 +101,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // The badge of the Mails tab follows the inbox.
         if (event.type === "mail") void reload();
         if (event.type === "message") {
-          const { conversationId, id, userId, mentionIds } = event.message;
+          const { conversationId, id, userId, mentionIds, parentId, body, createdAt, files, call } = event.message;
           const reading = conversationId === active.current && !document.hidden;
           const counts = !reading && userId !== meId.current;
           const mentioned = counts && mentionIds.includes(meId.current);
           // A direct message from someone new: the conversation is not in the list yet.
           if (!known.current.has(conversationId)) void reload();
-          setState((s) => s && { ...s, conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, lastMessageId: Math.max(c.lastMessageId, id), unread: counts ? c.unread + 1 : c.unread, mentions: mentioned ? c.mentions + 1 : c.mentions } : c)) });
+          setState((s) => s && { ...s, conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, lastMessageId: Math.max(c.lastMessageId, id), last: parentId ? c.last : { userId, body: body.slice(0, 160), at: createdAt, files: files.length, call: !!call }, unread: counts ? c.unread + 1 : c.unread, mentions: mentioned ? c.mentions + 1 : c.mentions } : c)) });
         }
         listeners.current.forEach((fn) => fn(event));
       };

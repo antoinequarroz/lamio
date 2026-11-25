@@ -62,3 +62,13 @@ export async function api<T>(url: string, init?: RequestInit & { json?: unknown 
   if (!res.ok) throw new Error((data as { error?: string }).error ?? "Une erreur est survenue");
   return data as T;
 }
+
+/** When, in a list: the time today, "Hier", the weekday this week, else the date (as Messages on iOS). */
+export function shortWhen(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  if (sameDay(d, now)) return clock(iso);
+  if (sameDay(d, new Date(now.getTime() - 86_400_000))) return "Hier";
+  if (now.getTime() - d.getTime() < 6 * 86_400_000) return d.toLocaleDateString("fr-CH", { weekday: "long" });
+  return d.toLocaleDateString("fr-CH", { day: "numeric", month: "numeric", year: d.getFullYear() === now.getFullYear() ? undefined : "2-digit" });
+}

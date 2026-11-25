@@ -48,6 +48,8 @@ export type Conversation = {
   /** Among the unread messages, how many mention me. */
   mentions: number;
   lastMessageId: number;
+  /** The newest message (not a thread reply), shown under the name in the phone's list. */
+  last?: { userId: string; body: string; at: string; files: number; call: boolean } | null;
   /** I may rename this channel and manage its members (its creator, or an admin). */
   canManage: boolean;
 };

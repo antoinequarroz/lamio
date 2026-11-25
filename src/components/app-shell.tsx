@@ -2,13 +2,14 @@
 
 import { ArrowUpRight, CalendarDays, Hash, LayoutGrid, Lock, Mail, MessagesSquare, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, SquarePen } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
 import { registerIosPush } from "@/lib/ios-push";
 import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
 import { useStored } from "@/lib/use-stored";
+import { useEdgeSwipe } from "@/lib/swipe-back";
 import type { Conversation } from "@/lib/types";
 import { APP_VERSION } from "@/lib/brand";
 import { APP_NAME, cn, moduleLink } from "@/lib/utils";
@@ -21,7 +22,7 @@ import { ModulePicto } from "./module-icon";
 import { Avatar, Kbd, primaryClass } from "./ui";
 
 const NAV = [
-  { href: "/c", label: "Messagerie", Icon: MessagesSquare },
+  { href: "/c", label: "Messagerie", short: "Messages", Icon: MessagesSquare },
   { href: "/mail", label: "Mails", Icon: Mail },
   { href: "/calendar", label: "Calendrier", Icon: CalendarDays },
   { href: "/modules", label: "Modules", Icon: LayoutGrid },
@@ -49,6 +50,9 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   // The iPhone app's push token, registered under this account.
   useEffect(() => registerIosPush(), []);
+  // On a phone, a swipe from the left edge goes back (see useSwipeBack).
+  const page = useRef<HTMLDivElement>(null);
+  useEdgeSwipe(page);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -79,8 +83,11 @@ function Shell({ children }: { children: React.ReactNode }) {
         </>
       )}
       <main className="flex min-w-0 flex-1 flex-col p-2 pl-0 max-md:p-0">
-        <MobileBar />
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:rounded-none max-md:border-0">{children}</div>
+        {/* On a phone: the same rounded card on the grain as on the site, without the frosted glass (costly to repaint while scrolling). */}
+        <div ref={page} className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface/70 shadow-card backdrop-blur-xl max-md:mx-1.5 max-md:mt-1 max-md:mb-1 max-md:rounded-[22px] max-md:bg-surface/80 max-md:backdrop-blur-none">{children}</div>
+        <Suspense>
+          <TabBar />
+        </Suspense>
       </main>
       <CommandMenu />
       <Notifier />
@@ -118,7 +125,7 @@ function Rail({ onExpand }: { onExpand: () => void }) {
         <Search className="size-4" />
       </button>
       {nav.map(({ href, label, Icon }) => {
-        const active = pathname.startsWith(href);
+        const active = isUnder(pathname, href);
         const dot = (href === "/c" && unread > 0) || (href === "/mail" && !!mail?.unread);
         return (
           <Link key={href} href={href} aria-label={label} title={label} className={cn(button, active ? "bg-surface text-ink shadow-card" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}>
@@ -169,7 +176,7 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
 
       <nav className="flex flex-col gap-px">
         {nav.map(({ href, label, Icon }) => {
-          const active = pathname.startsWith(href);
+          const active = isUnder(pathname, href);
           return (
             <Link
               key={href}
@@ -351,24 +358,43 @@ export function ConversationList() {
   );
 }
 
-function MobileBar() {
+/**
+ * The phone's tab bar: a floating capsule at the bottom, within thumb's reach, the current tab on a
+ * tinted pill. Hidden inside a conversation or an open mail, as on iOS.
+ */
+function TabBar() {
   const pathname = usePathname();
-  const { setCommandOpen, setDialog } = useApp();
+  const params = useSearchParams();
+  const { conversations, mail } = useApp();
   const nav = useNav();
+  const unread = conversations.reduce((n, c) => n + c.unread, 0);
+  const mine = conversations.reduce((n, c) => n + forMe(c), 0);
+  if (pathname.startsWith("/c/") || (pathname === "/mail" && params.get("m"))) return null;
   return (
-    <div className="flex items-center gap-1 border-b border-line px-3 py-2 md:hidden">
-      <Logo className="mr-1 size-6" />
-      {nav.map(({ href, label, Icon }) => (
-        <Link key={href} href={href} aria-label={label} className={cn("flex size-9 items-center justify-center rounded-lg", pathname.startsWith(href) ? "bg-surface text-accent shadow-card" : "text-ink-3")}>
-          <Icon className="size-[18px]" />
-        </Link>
-      ))}
-      <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" className="ml-auto flex size-9 items-center justify-center rounded-lg text-ink-3">
-        <Search className="size-[18px]" />
-      </button>
-      <button onClick={() => setDialog("dm")} aria-label="Nouveau message" className="press flex size-9 items-center justify-center rounded-lg bg-accent text-accent-ink">
-        <SquarePen className="size-4" strokeWidth={2.2} />
-      </button>
+    <div className="shrink-0 px-3 pt-1 pb-1 md:hidden">
+      <nav aria-label="Sections" className="flex h-[62px] items-center rounded-[31px] border border-line-strong bg-surface/85 p-1 shadow-[0_8px_24px_-10px_rgba(20,18,14,0.28),0_1px_0_rgba(255,255,255,0.5)_inset]">
+        {nav.map(({ href, label, short, Icon }) => {
+          const active = isUnder(pathname, href);
+          const count = href === "/c" ? mine || unread : href === "/mail" ? (mail?.unread ?? 0) : 0;
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-current={active ? "page" : undefined}
+              className={cn("press relative flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-[3px] rounded-[27px] text-[10.5px] font-semibold tracking-[-0.01em] transition-colors duration-200", active ? "bg-accent-soft text-accent" : "text-ink-2")}
+            >
+              <Icon className="size-[21px]" strokeWidth={active ? 2.3 : 1.8} />
+              <span className="max-w-full truncate px-0.5">{short ?? label}</span>
+              {count > 0 && (
+                <span className={cn("tabular absolute top-1 left-1/2 ml-1 min-w-[18px] rounded-full px-1 text-center text-[10.5px] leading-[18px] font-bold ring-2 ring-bg", href === "/c" && mine === 0 ? "bg-ink-2 text-bg" : "bg-accent text-accent-ink")}>{count > 99 ? "99+" : count}</span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }
+
+/** "/c" is the Messagerie, "/calendar" is not part of it. */
+const isUnder = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`);

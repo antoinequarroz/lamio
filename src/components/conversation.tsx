@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowLeft, Hash, Lock, Settings2, Users, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, Hash, Lock, Settings2, Users, X } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useApp } from "@/lib/store";
+import { useSwipeBack } from "@/lib/swipe-back";
 import type { Message } from "@/lib/types";
 import { api, cn, dayLabel } from "@/lib/utils";
 import { CallButton } from "./call";
@@ -110,6 +111,9 @@ export function ConversationView({ id }: { id: string }) {
 
   // Stable, so the thread panel does not reload each time this view renders.
   const closeThread = useCallback(() => setThreadId(null), []);
+  // Swiping from the edge on a phone: closes the thread, else back to the list.
+  const router = useRouter();
+  useSwipeBack(threadId !== null ? closeThread : () => router.push("/c"));
   const parentChanged = useCallback((m: Message) => setMessages((list) => replace(list, m)), []);
 
   const loadOlder = async () => {
@@ -165,26 +169,26 @@ export function ConversationView({ id }: { id: string }) {
   return (
     <div className="flex min-h-0 flex-1">
       <section className={cn("flex min-w-0 flex-1 flex-col", threadId !== null && "max-lg:hidden")}>
-        <header className="flex items-center gap-3 border-b border-line px-7 py-4 max-md:px-3 max-md:py-2.5">
-          <Link href="/c" aria-label="Retour" className="-ml-1 flex size-9 items-center justify-center rounded-lg text-ink-2 md:hidden">
-            <ArrowLeft className="size-[18px]" />
+        <header className="flex items-center gap-3 border-b border-line px-7 py-4 max-md:gap-2 max-md:px-2 max-md:py-1.5">
+          <Link href="/c" aria-label="Retour" className="press flex size-10 items-center justify-center rounded-full text-accent md:hidden">
+            <ChevronLeft className="size-7" strokeWidth={2.2} />
           </Link>
           {isChannel ? (
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent max-md:hidden">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent max-md:rounded-full">
               <ChannelIcon className="size-[18px]" strokeWidth={2.2} />
             </span>
           ) : (
-            <Avatar id={other?.id ?? id} name={other?.name ?? "?"} size="lg" />
+            <Avatar id={other?.id ?? id} name={other?.name ?? "?"} size="lg" className="max-md:rounded-full" />
           )}
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-[24px] leading-none">{isChannel ? conversation.name : title}</h1>
-            <p className="mt-1 truncate text-[12.5px] text-ink-3">{subtitle}</p>
+            <h1 className="truncate font-display text-[24px] leading-none max-md:font-sans max-md:text-[17px] max-md:font-semibold max-md:leading-tight">{isChannel ? conversation.name : title}</h1>
+            <p className="mt-1 truncate text-[12.5px] text-ink-3 max-md:mt-0">{subtitle}</p>
           </div>
           <CallButton conversationId={id} />
           {isChannel && (conversation.private || conversation.canManage) && (
             <Button size="sm" onClick={() => setSettingsOpen(true)} aria-label={conversation.private ? `Réglages du canal, ${people}` : "Réglages du canal"}>
               {conversation.private ? <Users className="size-3.5" /> : <Settings2 className="size-3.5" />}
-              {conversation.private ? count : "Réglages"}
+              {conversation.private ? count : <span className="max-md:hidden">Réglages</span>}
             </Button>
           )}
         </header>

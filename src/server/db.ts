@@ -400,6 +400,8 @@ export function listConversations(userId: string, role: Role = "member"): Conver
     .prepare(
       `select c.id, c.kind, c.name, c.topic, c.dm_key, c.private, c.created_by,
         coalesce((select max(id) from messages m where m.conversation_id = c.id), 0) as last_message_id,
+        (select json_object('userId', m.user_id, 'body', substr(m.body, 1, 160), 'at', m.created_at, 'files', (select count(*) from files f where f.message_id = m.id), 'call', m.call is not null)
+          from messages m where m.conversation_id = c.id and m.parent_id is null order by m.id desc limit 1) as last_json,
         (select count(*) from messages m where m.conversation_id = c.id and m.user_id != @me and m.id > ${READ}) as unread,
         (select count(*) from mentions x join messages m on m.id = x.message_id
           where x.user_id = @me and m.conversation_id = c.id and m.user_id != @me and m.id > ${READ}) as mentions
@@ -407,7 +409,7 @@ export function listConversations(userId: string, role: Role = "member"): Conver
        where ${VISIBLE}
        order by c.kind, c.name collate nocase, c.created_at`,
     )
-    .all({ me: userId }) as (ConversationRow & { last_message_id: number; unread: number; mentions: number })[];
+    .all({ me: userId }) as (ConversationRow & { last_message_id: number; last_json: string | null; unread: number; mentions: number })[];
   return rows.map((r) => ({
     id: r.id,
     kind: r.kind,
@@ -419,8 +421,16 @@ export function listConversations(userId: string, role: Role = "member"): Conver
     unread: r.unread,
     mentions: r.mentions,
     lastMessageId: r.last_message_id,
+    last: lastOf(r.last_json),
     canManage: r.kind === "channel" && (role === "admin" || r.created_by === userId),
   }));
+}
+
+/** The newest message of a conversation (not a thread reply), for the preview in the list. */
+function lastOf(json: string | null): Conversation["last"] {
+  if (!json) return null;
+  const v = JSON.parse(json) as { userId: string; body: string; at: string; files: number; call: number };
+  return { userId: v.userId, body: v.body, at: v.at, files: v.files, call: !!v.call };
 }
 
 /** May this person rename the channel and remove its members? Its creator, or an admin, and only if they can see it. */
