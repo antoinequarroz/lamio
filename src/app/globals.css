@@ -245,6 +245,19 @@ body::before {
 .dialog-popup {
   animation: pop 220ms var(--ease-out) both;
 }
+@keyframes sheet {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@media (max-width: 767px) {
+  .dialog-popup.sheet {
+    animation: sheet 360ms var(--ease-drawer) both;
+  }
+}
 @keyframes fade {
   from {
     opacity: 0;

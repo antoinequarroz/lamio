@@ -25,7 +25,7 @@ export function CallWindow() {
       aria-label={`Appel ${call.title}`}
       className={cn(
         "fixed z-50 flex flex-col overflow-hidden border border-line-strong bg-[#0f0f0e] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.55)] transition-[inset,width,height,border-radius] duration-300 ease-[var(--ease-out)]",
-        small ? "right-4 bottom-4 h-[300px] w-[420px] rounded-2xl max-md:right-2 max-md:bottom-2 max-md:h-[220px] max-md:w-[300px]" : "inset-3 rounded-2xl max-md:inset-0 max-md:rounded-none",
+        small ? "right-4 bottom-4 h-[300px] w-[420px] rounded-2xl max-md:right-2 max-md:bottom-2 max-md:h-[220px] max-md:w-[300px]" : "inset-3 rounded-2xl max-md:inset-0 max-md:rounded-none max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]",
       )}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-white/10 px-3 text-[13px] text-white/85">

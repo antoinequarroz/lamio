@@ -276,7 +276,8 @@ export function Compose({ init, identities, onClose, onSent, onScheduled }: { in
       aria-label={title}
       className={cn(
         "fixed z-[60] flex flex-col overflow-hidden border border-line-strong bg-surface shadow-2xl",
-        "inset-0",
+        // On a phone: full screen, clear of the notch and the home bar.
+        "inset-0 max-md:border-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]",
         min
           ? "md:top-auto md:left-auto md:right-6 md:bottom-0 md:h-12 md:w-[360px] md:rounded-t-xl md:rounded-b-none"
           : size === "full"

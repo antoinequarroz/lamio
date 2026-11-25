@@ -70,6 +70,7 @@ const AVATAR_SIZES = {
   sm: "size-7 rounded-md text-[10.5px]",
   md: "size-8 rounded-lg text-[12px]",
   lg: "size-9 rounded-lg text-[13px]",
+  xl: "size-11 rounded-full text-[14px]",
 };
 
 export function Avatar({ id, name, size = "md", className }: { id: string; name: string; size?: keyof typeof AVATAR_SIZES; className?: string }) {
@@ -95,12 +96,14 @@ export function Modal({ title, onClose, children, className }: { title: string; 
   }, [onClose]);
 
   return (
-    <div className={cn("fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-4", className ? "pt-[8vh]" : "pt-[14vh]")}>
-      <div className="dialog-backdrop absolute inset-0 bg-[rgba(15,14,12,0.3)] backdrop-blur-[2px]" onClick={onClose} />
-      <div role="dialog" aria-modal aria-label={title} className={cn("dialog-popup relative w-full max-w-[440px] rounded-2xl border border-line-strong bg-surface p-6 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)]", className)}>
+    // On a phone: a sheet that rises from the bottom, as on iOS.
+    <div className={cn("fixed inset-0 z-40 flex items-start justify-center overflow-y-auto p-4 max-md:items-end max-md:overflow-hidden max-md:p-0 max-md:pt-[calc(env(safe-area-inset-top)+24px)]", className ? "pt-[8vh]" : "pt-[14vh]")}>
+      <div className="dialog-backdrop absolute inset-0 bg-[rgba(15,14,12,0.3)] backdrop-blur-[2px] max-md:bg-[rgba(15,14,12,0.4)] max-md:backdrop-blur-none" onClick={onClose} />
+      <div role="dialog" aria-modal aria-label={title} className={cn("dialog-popup sheet relative w-full max-w-[440px] rounded-2xl border border-line-strong bg-surface p-6 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] max-md:max-h-full max-md:overflow-y-auto max-md:rounded-t-[24px] max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:px-5 max-md:pt-3 max-md:pb-[calc(env(safe-area-inset-bottom)+20px)]", className, "max-md:max-w-none")}>
+        <div className="mx-auto mb-3 h-[5px] w-9 rounded-full bg-ink/15 md:hidden" aria-hidden />
         <div className="mb-4 flex items-center">
           <h2 className="flex-1 font-display text-[24px] leading-none">{title}</h2>
-          <button onClick={onClose} aria-label="Fermer" className="press -mr-1.5 flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/5 hover:text-ink">
+          <button onClick={onClose} aria-label="Fermer" className="press -mr-1.5 flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/5 hover:text-ink max-md:size-8 max-md:rounded-full max-md:bg-ink/[0.07]">
             <X className="size-4" />
           </button>
         </div>

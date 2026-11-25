@@ -358,7 +358,10 @@ export function ConversationList() {
   );
 }
 
-/** The phone's tab bar, at the bottom within thumb's reach. Hidden inside a conversation or an open mail, as on iOS. */
+/**
+ * The phone's tab bar: a floating capsule at the bottom, within thumb's reach, the current tab on a
+ * tinted pill. Hidden inside a conversation or an open mail, as on iOS.
+ */
 function TabBar() {
   const pathname = usePathname();
   const params = useSearchParams();
@@ -368,35 +371,27 @@ function TabBar() {
   const mine = conversations.reduce((n, c) => n + forMe(c), 0);
   if (pathname.startsWith("/c/") || (pathname === "/mail" && params.get("m"))) return null;
   return (
-    <nav aria-label="Sections" className="flex shrink-0 border-t border-line bg-bg px-1 pt-1 pb-0.5 md:hidden">
-      {nav.map(({ href, label, short, Icon }) => {
-        const active = isUnder(pathname, href);
-        const count = href === "/c" ? mine || unread : href === "/mail" ? (mail?.unread ?? 0) : 0;
-        return (
-          <Link key={href} href={href} aria-current={active ? "page" : undefined} className={cn("press relative flex h-[50px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg text-[10.5px] font-medium", active ? "text-accent" : "text-ink-3")}>
-            <Icon className="size-[22px]" strokeWidth={active ? 2.2 : 1.9} />
-            <span className="max-w-full truncate">{short ?? label}</span>
-            {count > 0 && (
-              <span className={cn("tabular absolute top-0.5 left-1/2 ml-1.5 min-w-[18px] rounded-full px-1 text-center text-[10.5px] leading-[18px] font-semibold ring-2 ring-bg", href === "/c" && mine === 0 ? "bg-ink/[0.55] text-bg" : "bg-accent text-accent-ink")}>{count > 99 ? "99+" : count}</span>
-            )}
-          </Link>
-        );
-      })}
-    </nav>
-  );
-}
-
-/** Search and a new message, at the top of the conversation list on a phone. */
-export function MobileActions() {
-  const { setCommandOpen, setDialog } = useApp();
-  return (
-    <div className="flex items-center gap-1.5 md:hidden">
-      <button onClick={() => setCommandOpen(true)} aria-label="Rechercher" className="press flex size-10 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-2 shadow-card">
-        <Search className="size-[18px]" />
-      </button>
-      <button onClick={() => setDialog("dm")} aria-label="Nouveau message" className={cn("press flex size-10 items-center justify-center rounded-full", primaryClass)}>
-        <SquarePen className="size-[18px]" strokeWidth={2.2} />
-      </button>
+    <div className="shrink-0 bg-surface px-3 pt-1.5 pb-1 md:hidden">
+      <nav aria-label="Sections" className="flex h-[62px] items-center rounded-[31px] border border-line-strong bg-bg/90 p-1 shadow-[0_8px_24px_-10px_rgba(20,18,14,0.28),0_1px_0_rgba(255,255,255,0.5)_inset]">
+        {nav.map(({ href, label, short, Icon }) => {
+          const active = isUnder(pathname, href);
+          const count = href === "/c" ? mine || unread : href === "/mail" ? (mail?.unread ?? 0) : 0;
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-current={active ? "page" : undefined}
+              className={cn("press relative flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-[3px] rounded-[27px] text-[10.5px] font-semibold tracking-[-0.01em] transition-colors duration-200", active ? "bg-accent-soft text-accent" : "text-ink-2")}
+            >
+              <Icon className="size-[21px]" strokeWidth={active ? 2.3 : 1.8} />
+              <span className="max-w-full truncate px-0.5">{short ?? label}</span>
+              {count > 0 && (
+                <span className={cn("tabular absolute top-1 left-1/2 ml-1 min-w-[18px] rounded-full px-1 text-center text-[10.5px] leading-[18px] font-bold ring-2 ring-bg", href === "/c" && mine === 0 ? "bg-ink-2 text-bg" : "bg-accent text-accent-ink")}>{count > 99 ? "99+" : count}</span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }

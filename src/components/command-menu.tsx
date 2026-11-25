@@ -62,10 +62,10 @@ export function CommandMenu() {
       onOpenChange={setOpen}
       label="Recherche"
       overlayClassName="fixed inset-0 z-40 bg-[rgba(15,14,12,0.3)] backdrop-blur-[2px]"
-      contentClassName="fixed top-[16vh] left-1/2 z-50 w-[min(600px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-line-strong bg-surface shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)]"
+      contentClassName="fixed top-[16vh] left-1/2 z-50 w-[min(600px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-line-strong bg-surface shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] max-md:top-[calc(env(safe-area-inset-top)+8px)] max-md:w-[calc(100vw-16px)]"
     >
-      <Command.Input value={query} onValueChange={setQuery} placeholder="Chercher un message, un canal, une personne…" className="h-12 w-full border-b border-line bg-transparent px-4 text-[14.5px] outline-none placeholder:text-ink-3" />
-      <Command.List className="scroll-thin max-h-[380px] overflow-y-auto p-2 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3">
+      <Command.Input value={query} onValueChange={setQuery} placeholder="Chercher un message, un canal, une personne…" className="h-12 w-full border-b border-line bg-transparent px-4 text-[14.5px] outline-none placeholder:text-ink-3 max-md:text-[16px]" />
+      <Command.List className="scroll-thin max-h-[380px] overflow-y-auto p-2 max-md:max-h-[55dvh] [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-3">
         {/* The menu only counts its own matches: with messages found by the server, it is not empty. */}
         {!hits.length && !mails.length && <Command.Empty className="py-10 text-center text-[13px] text-ink-3">Aucun résultat.</Command.Empty>}
         <Command.Group heading="Canaux">

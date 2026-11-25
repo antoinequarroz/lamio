@@ -122,7 +122,7 @@ export function Composer({ conversationId, parentId, placeholder, onSent, compac
   };
 
   return (
-    <div className={cn("pb-5 max-md:px-3 max-md:pb-3", compact ? "px-4" : "px-7")}>
+    <div className={cn("pb-5 max-md:px-2 max-md:pt-1.5 max-md:pb-2", compact ? "px-4" : "px-7")}>
       <div
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes("Files")) {
@@ -137,7 +137,7 @@ export function Composer({ conversationId, parentId, placeholder, onSent, compac
           if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
         }}
         className={cn(
-          "relative rounded-xl border bg-surface shadow-card transition-[border-color,box-shadow] duration-150 focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_var(--accent-soft)]",
+          "relative rounded-xl border bg-surface shadow-card transition-[border-color,box-shadow] duration-150 focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_var(--accent-soft)] max-md:flex max-md:flex-wrap max-md:items-end max-md:rounded-[22px] max-md:shadow-none max-md:focus-within:shadow-none",
           dragging ? "border-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "border-line-strong",
         )}
       >
@@ -163,7 +163,7 @@ export function Composer({ conversationId, parentId, placeholder, onSent, compac
           </div>
         )}
         {pending.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+          <div className="flex flex-wrap gap-1.5 px-3 pt-3 max-md:-order-1 max-md:basis-full">
             {pending.map((p) => (
               <span key={p.key} className={cn("flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-surface-2 py-1 pr-1 pl-2 text-[12px]", !p.file && "animate-pulse")}>
                 <Paperclip className="size-3.5 shrink-0 text-ink-3" />
@@ -205,7 +205,8 @@ export function Composer({ conversationId, parentId, placeholder, onSent, compac
                 return setMention(null);
               }
             }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // On a phone, the keyboard's return goes to the next line: the button sends, as in Messages.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(hover: none)").matches) {
               e.preventDefault();
               send();
             }
@@ -218,15 +219,15 @@ export function Composer({ conversationId, parentId, placeholder, onSent, compac
           }}
           maxLength={8000}
           placeholder={dragging ? "Dépose le fichier ici" : placeholder}
-          className="scroll-thin block w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-[14.5px] leading-[1.5] outline-none placeholder:text-ink-3"
+          className="scroll-thin block w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-[14.5px] leading-[1.5] outline-none placeholder:text-ink-3 max-md:max-h-[40vh] max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:px-1 max-md:py-[9px] max-md:text-[16px] max-md:leading-[22px]"
         />
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className="flex items-center gap-1 px-2 pb-2 max-md:contents">
           <input ref={picker} type="file" multiple hidden onChange={(e) => (e.target.files?.length && upload(e.target.files), (e.target.value = ""))} />
-          <button onClick={() => picker.current?.click()} aria-label="Joindre un fichier" title="Joindre un fichier" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink">
-            <Paperclip className="size-4" />
+          <button onClick={() => picker.current?.click()} aria-label="Joindre un fichier" title="Joindre un fichier" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink max-md:order-first max-md:m-[3px] max-md:size-9 max-md:rounded-full max-md:text-accent">
+            <Paperclip className="size-4 max-md:size-[19px]" />
           </button>
           {!compact && <span className="ml-auto text-[11px] text-ink-3 max-md:hidden">Entrée pour envoyer, Maj + Entrée pour aller à la ligne</span>}
-          <button onClick={send} disabled={!canSend} aria-label="Envoyer" className={cn("press ml-2 flex size-8 items-center justify-center rounded-lg disabled:pointer-events-none disabled:opacity-35 max-md:ml-auto", compact && "ml-auto", primaryClass)}>
+          <button onClick={send} disabled={!canSend} aria-label="Envoyer" className={cn("press ml-2 flex size-8 items-center justify-center rounded-lg disabled:pointer-events-none disabled:opacity-35 max-md:m-[5px] max-md:rounded-full", compact && "ml-auto", primaryClass)}>
             <ArrowUp className="size-4" strokeWidth={2.6} />
           </button>
         </div>

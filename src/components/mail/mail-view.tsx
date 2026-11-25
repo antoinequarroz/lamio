@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArrowLeft, Check, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, Clock, MailOpen, MailX, AlarmClock, BellRing, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, Sparkles, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
+import { Archive, Check, ChevronLeft, Download, Eye, File, FileText, Image as ImageIcon, Flag, Folder, FolderInput, FolderPlus, Forward, Inbox, List, Loader2, Mail, Clock, MailOpen, MailX, AlarmClock, BellRing, MessageSquareShare, MessagesSquare, MoreHorizontal, PanelLeftClose, Sparkles, PanelLeftOpen, Paperclip, Pencil, PencilLine, RefreshCw, Reply, ReplyAll, Search, Send, ShieldAlert, ShieldCheck, SquarePen, TicketPlus, Trash2, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -575,7 +575,42 @@ export function MailView() {
             allFlagged={messages.filter((m) => selected.has(m.uid)).every((m) => m.flagged)}
           />
         ) : (
-        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3">
+        <>
+        {/* On a phone, as Mail on iOS: the folder as a large title (tap to change), a search field, a round compose button. */}
+        <header className="shrink-0 px-4 pt-2 pb-2 md:hidden">
+          <div className="flex h-10 items-center gap-1">
+            <label className="relative flex min-w-0 items-center gap-1 text-[15px] font-medium text-accent">
+              <Folder className="size-[17px] shrink-0" />
+              <span className="truncate">Dossiers</span>
+              <select value={folder} onChange={(e) => go(e.target.value, null)} aria-label="Dossier" className="absolute inset-0 opacity-0">
+                {folders.map((f) => (
+                  <option key={f.path} value={f.path}>
+                    {f.name}
+                    {f.unread ? ` (${f.unread})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="flex-1" />
+            <button onClick={toggleThreads} aria-label={threaded ? "Afficher mail par mail" : "Regrouper par conversation"} className="press flex size-10 items-center justify-center rounded-full text-accent">
+              {threaded ? <MessagesSquare className="size-[19px]" /> : <List className="size-[19px]" />}
+            </button>
+            <button onClick={() => setCompose({ mode: "new", to: [], cc: [], bcc: [], subject: "", html: "" })} aria-label="Nouveau mail" className="press flex size-9 items-center justify-center rounded-full bg-accent text-accent-ink shadow-[0_6px_16px_-6px_var(--accent)]">
+              <SquarePen className="size-[17px]" strokeWidth={2.2} />
+            </button>
+          </div>
+          <h1 className="truncate font-display text-[34px] leading-none">{folder === "INBOX" ? "Réception" : (current?.name ?? folder)}</h1>
+          <p className="mt-1 flex items-center gap-1 text-[13px] text-ink-3">
+            <Zap className={cn("size-3", info.live ? "text-accent" : "text-ink-3")} />
+            {info.live ? "En direct" : "Connexion…"}
+            {current && current.unread > 0 && <> · {current.unread} non lu{current.unread > 1 ? "s" : ""}</>}
+          </p>
+          <button onClick={openSearch} className="mt-3 flex h-10 w-full items-center gap-2 rounded-xl bg-ink/[0.06] px-3 text-left text-[16px] text-ink-3">
+            <Search className="size-[18px]" />
+            Rechercher dans les mails
+          </button>
+        </header>
+        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3 max-md:hidden">
           <select value={folder} onChange={(e) => go(e.target.value, null)} aria-label="Dossier" className="h-8 min-w-0 rounded-lg border border-line-strong bg-surface px-2 text-[13px] lg:hidden">
             {folders.map((f) => (
               <option key={f.path} value={f.path}>
@@ -613,6 +648,7 @@ export function MailView() {
             <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
           </button>
         </header>
+        </>
         )}
         {!search && folder === "INBOX" && <InboxTabs tab={tab} counts={categories} onChange={setTab} />}
         {(info.status === "error" || info.status === "auth") && (
@@ -1039,7 +1075,7 @@ function MessageList({
             <li
               key={keyOf(m)}
               className={cn(
-                "group relative border-b border-line transition-colors duration-300",
+                "group relative border-b border-line transition-colors duration-300 max-md:ml-4 max-md:active:bg-ink/[0.05]",
                 checked ? "bg-[color-mix(in_oklab,var(--accent)_16%,transparent)]" : active ? "bg-accent-soft" : "hover:bg-ink/[0.03]",
                 fresh.has(keyOf(m)) && !active && !checked && "bg-[color-mix(in_oklab,var(--accent)_10%,transparent)]",
               )}
@@ -1059,18 +1095,18 @@ function MessageList({
               <button
                 ref={active ? activeRef : undefined}
                 onClick={(e) => (onSelect && (e.metaKey || e.ctrlKey || e.shiftKey || selected.size) ? onSelect(m.uid, e.shiftKey) : onOpen(m))}
-                className="relative flex w-full flex-col gap-0.5 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset md:pl-8"
+                className="relative flex w-full flex-col gap-0.5 px-4 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-inset max-md:py-3 max-md:pr-4 max-md:pl-0 md:pl-8"
               >
-                {unread && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
+                {unread && <span className={cn("absolute top-[17px] left-1.5 size-1.5 rounded-full bg-accent max-md:top-[19px] max-md:-left-3 max-md:size-2 md:left-3", (selected.size > 0) && "md:hidden", "md:group-hover:hidden")} aria-label="Non lu" />}
                 <span className="flex items-baseline gap-2">
-                  <span className={cn("min-w-0 flex-1 truncate text-[13.5px]", unread ? "font-semibold text-ink" : "text-ink-2")}>{m.thread && m.thread.count > 1 ? m.thread.participants.join(", ") : who(m.from)}</span>
+                  <span className={cn("min-w-0 flex-1 truncate text-[13.5px] max-md:text-[16px]", unread ? "font-semibold text-ink" : "text-ink-2 max-md:font-medium max-md:text-ink")}>{m.thread && m.thread.count > 1 ? m.thread.participants.join(", ") : who(m.from)}</span>
                   {m.thread && m.thread.count > 1 && <span className="tabular shrink-0 rounded-full bg-ink/[0.07] px-1.5 text-[11px] leading-[17px] font-medium text-ink-2" aria-label={`${m.thread.count} mails`}>{m.thread.count}</span>}
                   {m.flagged && <Flag className="size-3 shrink-0 self-center fill-danger text-danger" />}
                   {m.attachments && <Paperclip className="size-3 shrink-0 self-center text-ink-3" />}
-                  <span className={cn("tabular shrink-0 text-[11.5px]", unread ? "font-medium text-accent" : "text-ink-3")}>{shortDate(m.date)}</span>
+                  <span className={cn("tabular shrink-0 text-[11.5px] max-md:text-[13px]", unread ? "font-medium text-accent" : "text-ink-3")}>{shortDate(m.date)}</span>
                 </span>
-                <span className={cn("truncate text-[13px]", unread ? "font-medium text-ink" : "text-ink-2")}>{m.subject || "(sans objet)"}</span>
-                <span className="line-clamp-2 text-[12.5px] leading-snug text-ink-3">{m.preview || " "}</span>
+                <span className={cn("truncate text-[13px] max-md:text-[15px]", unread ? "font-medium text-ink" : "text-ink-2")}>{m.subject || "(sans objet)"}</span>
+                <span className="line-clamp-2 text-[12.5px] leading-snug text-ink-3 max-md:text-[14px]">{m.preview || " "}</span>
                 {folders && (
                   <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3">
                     <Folder className="size-3" />
@@ -1247,8 +1283,9 @@ function Reader({
   }, [mail, busy, gateway, me, onCompose, run, move, trash, junk, isDrafts]);
 
   const back = (
-    <button onClick={onBack} aria-label="Retour à la liste" className="press flex size-8 items-center justify-center rounded-lg text-ink-3 hover:bg-ink/[0.05] hover:text-ink md:hidden">
-      <ArrowLeft className="size-4" />
+    <button onClick={onBack} aria-label="Retour à la liste" className="press -ml-1.5 flex h-10 items-center gap-0.5 rounded-lg pr-2 text-[16px] text-accent md:hidden">
+      <ChevronLeft className="size-6" strokeWidth={2.2} />
+      Boîte
     </button>
   );
 
@@ -1311,14 +1348,14 @@ function Reader({
           {conversation ? `Conversation · ${members.length} mails` : new Date(mail.date).toLocaleString("fr-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
         </span>
         <span className="flex-1" />
-        <Action label={`Archiver${n} (E)`} Icon={Archive} onClick={() => run({ type: "archive" })} />
+        <Action label={`Archiver${n} (E)`} Icon={Archive} onClick={() => run({ type: "archive" })} className="max-md:hidden" />
         {trash ? (
-          <Action label={`Supprimer définitivement${n} (#)`} Icon={Trash2} onClick={() => run({ type: "delete" })} />
+          <Action label={`Supprimer définitivement${n} (#)`} Icon={Trash2} onClick={() => run({ type: "delete" })} className="max-md:hidden" />
         ) : (
-          <Action label={`Corbeille${n ? ` :${n}` : ""} (#)`} Icon={Trash2} onClick={() => run({ type: "trash" })} />
+          <Action label={`Corbeille${n ? ` :${n}` : ""} (#)`} Icon={Trash2} onClick={() => run({ type: "trash" })} className="max-md:hidden" />
         )}
         {junk ? <Action label="Pas un spam (!)" Icon={ShieldCheck} onClick={() => run({ type: "move", to: "INBOX" })} className="max-sm:hidden" /> : <Action label="Spam (!)" Icon={ShieldAlert} onClick={() => run({ type: "spam" })} className="max-sm:hidden" />}
-        <Action label={`Déplacer${n} (V)`} Icon={FolderInput} onClick={move} />
+        <Action label={`Déplacer${n} (V)`} Icon={FolderInput} onClick={move} className="max-md:hidden" />
         <Action label="Marquer comme non lu (U)" Icon={MailOpen} onClick={() => run({ type: "seen", value: false })} className="max-sm:hidden" />
         {sent ? (
           <WhenMenu kind="followup" title="Relance-moi sans réponse" onPick={(d) => void followUp(d)}>
@@ -1334,25 +1371,26 @@ function Reader({
         )}
         {ai && !isDrafts && <Action label="Aide IA : résumé et brouillon de réponse" Icon={Sparkles} active={aiOpen} onClick={() => setAiOpen(!aiOpen)} />}
         <Action label={mail.flagged ? "Retirer le drapeau (S)" : "Signaler (S)"} Icon={Flag} active={mail.flagged} onClick={() => run({ type: "flagged", value: !mail.flagged })} />
-        <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
+        <span className="mx-1 h-5 w-px bg-line max-md:hidden" />
         {isDrafts ? (
           <button onClick={() => onCompose(composeFrom(mail, "draft", me))} className="press flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-[12.5px] font-medium text-accent-ink">
             <PencilLine className="size-3.5" /> Reprendre
           </button>
         ) : (
           <>
-            <Action label="Répondre (R)" Icon={Reply} onClick={() => onCompose(composeFrom(mail, "reply", me))} />
-            <Action label="Répondre à tous (A)" Icon={ReplyAll} onClick={() => onCompose(composeFrom(mail, "replyAll", me))} />
-            <Action label="Transférer (F)" Icon={Forward} onClick={() => onCompose(composeFrom(mail, "forward", me))} />
+            <Action label="Répondre (R)" Icon={Reply} onClick={() => onCompose(composeFrom(mail, "reply", me))} className="max-md:hidden" />
+            <Action label="Répondre à tous (A)" Icon={ReplyAll} onClick={() => onCompose(composeFrom(mail, "replyAll", me))} className="max-md:hidden" />
+            <Action label="Transférer (F)" Icon={Forward} onClick={() => onCompose(composeFrom(mail, "forward", me))} className="max-md:hidden" />
           </>
         )}
-        <span className="mx-1 h-5 w-px bg-line max-sm:hidden" />
+        <span className="mx-1 h-5 w-px bg-line max-md:hidden" />
         <Action label="Partager dans Lamio (L)" Icon={MessageSquareShare} onClick={() => setGateway("share")} className="max-sm:hidden" />
         <Action label="Créer un ticket TickUp (T)" Icon={TicketPlus} onClick={() => setGateway("ticket")} className="max-sm:hidden" />
         <MoreActions
           items={[
             junk ? { label: "Pas un spam", Icon: ShieldCheck, onClick: () => run({ type: "move", to: "INBOX" }) } : { label: "Spam", Icon: ShieldAlert, onClick: () => run({ type: "spam" }) },
             { label: "Marquer comme non lu", Icon: MailOpen, onClick: () => run({ type: "seen", value: false }) },
+            ...(isDrafts ? [] : [{ label: "Répondre à tous", Icon: ReplyAll, onClick: () => onCompose(composeFrom(mail, "replyAll", me)) }]),
             { label: "Partager dans Lamio", Icon: MessageSquareShare, onClick: () => setGateway("share") },
             { label: "Créer un ticket TickUp", Icon: TicketPlus, onClick: () => setGateway("ticket") },
           ]}
@@ -1417,7 +1455,30 @@ function Reader({
           )}
         </div>
       </div>
+      {/* On a phone, as Mail on iOS: the main actions in a toolbar at the bottom, within thumb's reach. */}
+      <footer className="flex h-[54px] shrink-0 items-center justify-around border-t border-line bg-bg px-2 md:hidden">
+        <BarAction label={`Archiver${n}`} Icon={Archive} onClick={() => run({ type: "archive" })} />
+        {trash ? <BarAction label={`Supprimer définitivement${n}`} Icon={Trash2} onClick={() => run({ type: "delete" })} /> : <BarAction label={`Corbeille${n}`} Icon={Trash2} onClick={() => run({ type: "trash" })} />}
+        <BarAction label={`Déplacer${n}`} Icon={FolderInput} onClick={move} />
+        {isDrafts ? (
+          <BarAction label="Reprendre le brouillon" Icon={PencilLine} onClick={() => onCompose(composeFrom(mail, "draft", me))} />
+        ) : (
+          <>
+            <BarAction label="Répondre" Icon={Reply} onClick={() => onCompose(composeFrom(mail, "reply", me))} />
+            <BarAction label="Transférer" Icon={Forward} onClick={() => onCompose(composeFrom(mail, "forward", me))} />
+          </>
+        )}
+      </footer>
     </article>
+  );
+}
+
+/** A button of the phone's bottom toolbar: a large target, the accent colour as on iOS. */
+function BarAction({ label, Icon, onClick }: { label: string; Icon: typeof Reply; onClick: () => void }) {
+  return (
+    <button onClick={onClick} aria-label={label} className="press flex size-11 items-center justify-center rounded-full text-accent active:bg-accent-soft">
+      <Icon className="size-[22px]" strokeWidth={1.9} />
+    </button>
   );
 }
 
@@ -1466,7 +1527,7 @@ function LaterPanel({ items, onClose, onChanged }: { items: MailLaterInfo[]; onC
 /** Important / Newsletters / Notifications above the list of the inbox, with their unread mails. */
 function InboxTabs({ tab, counts, onChange }: { tab: InboxTab; counts: Record<MailCategory, number> | null; onChange: (t: InboxTab) => void }) {
   return (
-    <div role="tablist" aria-label="Boîte triée" className="scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-line px-2 py-1.5">
+    <div role="tablist" aria-label="Boîte triée" className="scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-line px-2 py-1.5 max-md:gap-2 max-md:px-4 max-md:pt-0 max-md:pb-2.5 max-md:[scrollbar-width:none]">
       {TABS.map((t) => {
         const n = t.id !== "all" ? (counts?.[t.id] ?? 0) : 0;
         const on = t.id === tab;
@@ -1476,10 +1537,10 @@ function InboxTabs({ tab, counts, onChange }: { tab: InboxTab; counts: Record<Ma
             role="tab"
             aria-selected={on}
             onClick={() => onChange(t.id)}
-            className={cn("press flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] whitespace-nowrap", on ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink")}
+            className={cn("press flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] whitespace-nowrap max-md:h-8 max-md:rounded-full max-md:px-3.5 max-md:text-[14px]", on ? "bg-accent-soft font-medium text-accent max-md:bg-accent max-md:text-accent-ink" : "text-ink-2 hover:bg-ink/[0.04] hover:text-ink max-md:bg-ink/[0.06]")}
           >
             {t.label}
-            {n > 0 && <span className={cn("tabular rounded-full px-1.5 text-[11px] leading-[18px]", on ? "bg-accent text-accent-ink" : "bg-ink/[0.07] text-ink-2")}>{n}</span>}
+            {n > 0 && <span className={cn("tabular rounded-full px-1.5 text-[11px] leading-[18px]", on ? "bg-accent text-accent-ink max-md:bg-accent-ink/20" : "bg-ink/[0.07] text-ink-2")}>{n}</span>}
           </button>
         );
       })}
@@ -1765,8 +1826,8 @@ function MoreActions({ items }: { items: { label: string; Icon: typeof Reply; on
 
 function Action({ label, Icon, onClick, active, small, className }: { label: string; Icon: typeof Reply; onClick: () => void; active?: boolean; small?: boolean; className?: string }) {
   return (
-    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex shrink-0 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", small ? "size-7" : "size-8", active ? "text-accent" : "text-ink-3", className)}>
-      <Icon className="size-4" />
+    <button onClick={onClick} aria-label={label} title={label} className={cn("press flex shrink-0 items-center justify-center rounded-lg hover:bg-ink/[0.05] hover:text-ink", small ? "size-7" : "size-8 max-md:size-10 max-md:text-accent", active ? "text-accent" : "text-ink-3", className)}>
+      <Icon className={cn("size-4", !small && "max-md:size-5")} />
     </button>
   );
 }
