@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
+import { registerIosPush } from "@/lib/ios-push";
 import { deviceNotify } from "@/lib/notifications";
 import { AppProvider, useApp } from "@/lib/store";
 import { useStored } from "@/lib/use-stored";
@@ -46,6 +47,9 @@ function Shell({ children }: { children: React.ReactNode }) {
   // The sidebar's width, or folded into a narrow rail of icons (⌘\ or the button).
   const [side, setSide] = useStored("app-sidebar", SIDEBAR, (v): v is typeof SIDEBAR => !!v && typeof (v as typeof SIDEBAR).width === "number");
 
+  // The iPhone app's push token, registered under this account.
+  useEffect(() => registerIosPush(), []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -83,7 +87,12 @@ function Shell({ children }: { children: React.ReactNode }) {
       <CallWindow />
       {dialog === "channel" && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === "dm" && <NewDmDialog onClose={() => setDialog(null)} />}
-      <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
+      <Toaster
+        position="bottom-right"
+        // On the iPhone the page runs under the notch and the home bar: keep toasts clear of them.
+        offset={{ top: "calc(24px + env(safe-area-inset-top))", right: "calc(24px + env(safe-area-inset-right))", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "calc(24px + env(safe-area-inset-left))" }}
+        mobileOffset={{ top: "calc(16px + env(safe-area-inset-top))", right: "calc(16px + env(safe-area-inset-right))", bottom: "calc(16px + env(safe-area-inset-bottom))", left: "calc(16px + env(safe-area-inset-left))" }}
+        toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
     </div>
   );
 }
