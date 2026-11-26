@@ -66,7 +66,12 @@ function Shell({ children }: { children: React.ReactNode }) {
       <CallWindow />
       {dialog === "channel" && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === "dm" && <NewDmDialog onClose={() => setDialog(null)} />}
-      <Toaster position="bottom-right" toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
+      <Toaster
+        position="bottom-right"
+        // On the iPhone the page runs under the notch and the home bar: keep toasts clear of them.
+        offset={{ top: "calc(24px + env(safe-area-inset-top))", right: "calc(24px + env(safe-area-inset-right))", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "calc(24px + env(safe-area-inset-left))" }}
+        mobileOffset={{ top: "calc(16px + env(safe-area-inset-top))", right: "calc(16px + env(safe-area-inset-right))", bottom: "calc(16px + env(safe-area-inset-bottom))", left: "calc(16px + env(safe-area-inset-left))" }}
+        toastOptions={{ className: "!rounded-xl !border-line-strong !bg-surface !text-ink !shadow-card !font-sans", classNames: { description: "!text-ink-2", actionButton: "!bg-ink !text-bg !rounded-md !font-medium" } }} />
     </div>
   );
 }
