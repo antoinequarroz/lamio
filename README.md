@@ -22,6 +22,7 @@ Lamio fait partie de la même suite que [Cairn](https://github.com/antoinequarro
 - **Notifications** : un message direct ou une mention s'annonce dans l'app, et sur l'appareil si on l'active dans Réglages.
 - **En direct** : les messages arrivent sans recharger la page, avec les compteurs de non lus.
 - **Recherche ⌘K** : aller à un canal, une personne, une action, ou retrouver un message et y sauter.
+- **Webhooks entrants** : dans les réglages d'un canal, sa créatrice (ou une administratrice) crée une adresse secrète par laquelle une autre application y écrit, par exemple les alertes d'Orbi. `POST <adresse>` avec `{"text": "…"}` (ou `title`, `body`, `url`) ; 30 messages par minute au plus. L'adresse ne s'affiche qu'une fois ; la supprimer la coupe aussitôt.
 - **Modules** : la liste des outils de la suite, et ceux qui sont branchés.
 - **Une seule connexion** : Cairn et Metricove s'ouvrent avec le compte Lamio, sans autre mot de passe. Les administrateurs y entrent toujours, et choisissent module par module quels membres y ont accès.
 - **Clair et sombre** : comme l'appareil, ou forcé dans Réglages.
@@ -53,6 +54,7 @@ Copier `.env.example` en `.env.local` (en local) ou `.env` (sur le VPS). Rien n'
 | `MAX_FILE_MB` | Taille maximale d'un fichier joint (25 Mo par défaut). |
 | `CAIRN_URL`, `METRICOVE_URL`, `ALFRED_URL`, `NINO_URL`, `TICKUP_URL` | Adresse d'un outil de la suite, pour le brancher. |
 | `ALFRED_API_TOKEN` | Jeton créé dans Alfred (Réglages › Accès à l'agenda) : ouvre l'onglet **Calendrier**. `alfw_…` (lecture et écriture) pour créer et modifier les événements depuis Lamio, `alf_…` pour seulement les voir. `ALFRED_API_URL` (facultatif) : où le serveur joint Alfred. |
+| `APP_URL` | Adresse publique de Lamio. Sert aussi à écrire l'adresse des webhooks entrants (sinon, celle par laquelle la page est ouverte). |
 | `COMPTE_URL`, `COMPTE_CLIENT_SECRET`, `APP_URL` | Branche Lamio sur le Compte Postmelo (compte unique de la suite). Voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md). |
 | `CAIRN_SSO_SECRET`, `METRICOVE_SSO_SECRET`, … | Secret partagé avec l'outil (32 caractères au moins), pour y entrer avec son compte Lamio. |
 

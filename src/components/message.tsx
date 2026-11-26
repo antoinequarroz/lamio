@@ -76,6 +76,7 @@ export function MessageItem({ message: m, grouped, inThread, onOpenThread, onCha
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-[13.5px] font-semibold">{author?.name ?? "Ancien membre"}</span>
+            {author?.bot && <span className="rounded bg-ink/[0.06] px-1 py-px text-[10px] font-semibold tracking-wide text-ink-3 uppercase">Appli</span>}
             <span className="tabular text-[11.5px] text-ink-3">{clock(m.createdAt)}</span>
           </div>
         )}

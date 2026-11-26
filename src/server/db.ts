@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { mentionedIds } from "@/lib/mentions";
-import type { CallInfo, Conversation, FileInfo, Message, Role, SearchHit, User } from "@/lib/types";
+import type { CallInfo, Conversation, FileInfo, Message, Role, SearchHit, User, Webhook } from "@/lib/types";
 
 export const dataDir = () => path.resolve(process.env.DATA_DIR ?? "./data");
 export const filesDir = () => path.join(dataDir(), "files");
@@ -110,6 +110,18 @@ export function db() {
       user_id text not null references users (id) on delete cascade,
       primary key (module, user_id)
     );
+    -- Incoming webhook: another tool (Orbi…) posts in a channel with a secret address. Only the
+    -- SHA-256 of its token is kept. It writes as its own account (users.bot = 1), which cannot sign in.
+    create table if not exists webhooks (
+      id text primary key,
+      conversation_id text not null references conversations (id) on delete cascade,
+      user_id text not null references users (id) on delete cascade,
+      name text not null,
+      token_hash text not null unique,
+      created_by text references users (id) on delete set null,
+      created_at text not null,
+      last_used_at text
+    );
   `);
   // Databases created by an earlier version get the columns added since.
   const addColumn = (table: string, column: string, definition: string) => {
@@ -123,6 +135,8 @@ export function db() {
   addColumn("messages", "parent_id", "integer references messages (id) on delete cascade");
   // A video call started in the conversation (its room lives in Alfred): {"slug","title"} as JSON.
   addColumn("messages", "call", "text");
+  // The account of an incoming webhook: shown as the author of its messages, never as a person.
+  addColumn("users", "bot", "integer not null default 0");
   conn.exec("create index if not exists messages_parent on messages (parent_id) where parent_id is not null");
   globalForDb.__appDb = { dir, conn };
   return conn;
@@ -133,12 +147,16 @@ const now = () => new Date().toISOString();
 
 // ---- Users
 
-type UserRow = { id: string; email: string; name: string; role: Role; salt: string; password_hash: string; created_at: string };
-const toUser = (r: UserRow): User => ({ id: r.id, email: r.email, name: r.name, role: r.role, createdAt: r.created_at });
+type UserRow = { id: string; email: string; name: string; role: Role; salt: string; password_hash: string; created_at: string; bot: number };
+const toUser = (r: UserRow): User => ({ id: r.id, email: r.email, name: r.name, role: r.role, createdAt: r.created_at, ...(r.bot ? { bot: true } : {}) });
 
-export const countUsers = () => (db().prepare("select count(*) as n from users").get() as { n: number }).n;
+export const countUsers = () => (db().prepare("select count(*) as n from users where bot = 0").get() as { n: number }).n;
 
-export const listUsers = () => (db().prepare("select * from users order by name collate nocase").all() as UserRow[]).map(toUser);
+/** The people (webhook accounts left out). */
+export const listUsers = () => (db().prepare("select * from users where bot = 0 order by name collate nocase").all() as UserRow[]).map(toUser);
+
+/** The accounts of incoming webhooks: the authors of their messages. */
+export const listBots = () => (db().prepare("select * from users where bot = 1 order by name collate nocase").all() as UserRow[]).map(toUser);
 
 export function getUser(id: string): User | null {
   const r = db().prepare("select * from users where id = ?").get(id) as UserRow | undefined;
@@ -146,12 +164,12 @@ export function getUser(id: string): User | null {
 }
 
 export function getCredentials(email: string) {
-  const r = db().prepare("select * from users where email = ?").get(email.trim().toLowerCase()) as UserRow | undefined;
+  const r = db().prepare("select * from users where email = ? and bot = 0").get(email.trim().toLowerCase()) as UserRow | undefined;
   return r ? { user: toUser(r), salt: r.salt, hash: r.password_hash } : null;
 }
 
 export function getCredentialsById(id: string) {
-  const r = db().prepare("select * from users where id = ?").get(id) as UserRow | undefined;
+  const r = db().prepare("select * from users where id = ? and bot = 0").get(id) as UserRow | undefined;
   return r ? { user: toUser(r), salt: r.salt, hash: r.password_hash } : null;
 }
 
@@ -323,7 +341,7 @@ export function updateChannel(id: string, patch: { name?: string; topic?: string
 /** The people who can read a conversation, with their names: the ones a message may mention. */
 function readersOf(conversationId: string): { id: string; name: string }[] {
   const audience = audienceOf(conversationId);
-  const everyone = db().prepare("select id, name from users").all() as { id: string; name: string }[];
+  const everyone = db().prepare("select id, name from users where bot = 0").all() as { id: string; name: string }[];
   return audience === "all" ? everyone : everyone.filter((u) => audience.includes(u.id));
 }
 
@@ -570,3 +588,49 @@ export function staleFiles(): string[] {
   if (ids.length) db().prepare("delete from files where message_id is null and created_at < ?").run(limit);
   return ids;
 }
+
+// ---- Incoming webhooks
+
+export type WebhookRow = { id: string; conversation_id: string; user_id: string; name: string; token_hash: string; created_by: string | null; created_at: string; last_used_at: string | null };
+const toWebhook = (r: WebhookRow): Webhook => ({ id: r.id, conversationId: r.conversation_id, userId: r.user_id, name: r.name, createdBy: r.created_by, createdAt: r.created_at, lastUsedAt: r.last_used_at });
+
+export const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+
+/**
+ * Creates an incoming webhook in a channel, with its own account named after it. Returns the
+ * token once (it is not kept): it goes in the address the other tool posts to.
+ */
+export function createWebhook(input: { conversationId: string; name: string; createdBy: string }): { webhook: Webhook; token: string } | null {
+  return db().transaction(() => {
+    const c = db().prepare("select kind from conversations where id = ?").get(input.conversationId) as { kind: string } | undefined;
+    if (c?.kind !== "channel") return null;
+    const id = newId();
+    const userId = newId();
+    const token = `whk_${crypto.randomBytes(24).toString("base64url")}`;
+    db()
+      .prepare("insert into users (id, email, name, role, salt, password_hash, created_at, bot) values (?, ?, ?, 'member', ?, '', ?, 1)")
+      .run(userId, `${userId.toLowerCase()}@webhook.invalid`, input.name.trim(), crypto.randomBytes(16).toString("hex"), now());
+    db()
+      .prepare("insert into webhooks (id, conversation_id, user_id, name, token_hash, created_by, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+      .run(id, input.conversationId, userId, input.name.trim(), hashToken(token), input.createdBy, now());
+    return { webhook: getWebhook(id)!, token };
+  })();
+}
+
+export function getWebhook(id: string): Webhook | null {
+  const r = db().prepare("select * from webhooks where id = ?").get(id) as WebhookRow | undefined;
+  return r ? toWebhook(r) : null;
+}
+
+export const listWebhooks = (conversationId: string) => (db().prepare("select * from webhooks where conversation_id = ? order by created_at").all(conversationId) as WebhookRow[]).map(toWebhook);
+
+/** The webhook of this token, or null. Records that it was used. */
+export function webhookByToken(token: string): Webhook | null {
+  const r = db().prepare("select * from webhooks where token_hash = ?").get(hashToken(token)) as WebhookRow | undefined;
+  if (!r) return null;
+  db().prepare("update webhooks set last_used_at = ? where id = ?").run(now(), r.id);
+  return toWebhook(r);
+}
+
+/** Its address stops working. Its account stays, so the messages it posted keep their author. */
+export const deleteWebhook = (id: string) => db().prepare("delete from webhooks where id = ?").run(id).changes > 0;

@@ -136,7 +136,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const store = useMemo<Store | null>(() => {
     if (!state) return null;
-    const byId = new Map(state.users.map((u) => [u.id, u]));
+    const byId = new Map([...state.users, ...(state.bots ?? [])].map((u) => [u.id, u]));
     const userById = (id: string | undefined) => (id ? byId.get(id) : undefined);
     return {
       ...state,
