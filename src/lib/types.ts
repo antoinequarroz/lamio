@@ -1,6 +1,17 @@
 export type Role = "admin" | "member";
 
-export type User = { id: string; name: string; email: string; role: Role; createdAt: string };
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  createdAt: string;
+  /** The account of an incoming webhook (Orbi…): it posts, it never signs in. */
+  bot?: boolean;
+};
+
+/** An incoming webhook of a channel. Its token is shown once, when it is created. */
+export type Webhook = { id: string; conversationId: string; userId: string; name: string; createdBy: string | null; createdAt: string; lastUsedAt: string | null };
 
 export type FileInfo = { id: string; name: string; mime: string; size: number };
 
@@ -79,7 +90,10 @@ export type ModuleInfo = {
 
 export type AppState = {
   me: User;
+  /** The people. */
   users: User[];
+  /** The accounts of incoming webhooks, to show who wrote their messages. */
+  bots: User[];
   conversations: Conversation[];
   modules: ModuleInfo[];
   /** The Calendrier tab (Alfred's calendar): whether I see it. */
