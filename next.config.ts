@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Self-contained server for the Docker image.
   output: "standalone",
-  serverExternalPackages: ["better-sqlite3", "imapflow", "nodemailer"],
+  serverExternalPackages: ["better-sqlite3", "imapflow", "nodemailer", "@sentry/node"],
   async headers() {
     return [
       {
