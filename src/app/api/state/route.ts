@@ -3,7 +3,7 @@ import type { AppState } from "@/lib/types";
 import { listModules } from "@/modules/registry";
 import { calendarConfigured, callsConfigured } from "@/server/alfred";
 import { currentUser } from "@/server/auth";
-import { listConversations, listUsers, moduleAccess } from "@/server/db";
+import { listBots, listConversations, listUsers, moduleAccess } from "@/server/db";
 import { unauthorized } from "@/server/http";
 import { inboxUnread } from "@/server/mail/store";
 
@@ -21,6 +21,6 @@ export async function GET() {
   });
   const unread = inboxUnread(me.id);
   const calendar = calendarConfigured() && !!modules.find((m) => m.id === "agenda")?.allowed;
-  const state: AppState = { me, users: listUsers(), conversations: listConversations(me.id, me.role), modules, mail: unread === null ? null : { unread }, calendar, calls: callsConfigured() };
+  const state: AppState = { me, users: listUsers(), bots: listBots(), conversations: listConversations(me.id, me.role), modules, mail: unread === null ? null : { unread }, calendar, calls: callsConfigured() };
   return NextResponse.json(state);
 }

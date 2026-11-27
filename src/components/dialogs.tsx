@@ -1,11 +1,11 @@
 "use client";
 
-import { Lock, LogOut, UserMinus, UserPlus } from "lucide-react";
+import { Copy, Lock, LogOut, Trash2, UserMinus, UserPlus, Webhook as WebhookIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useApp } from "@/lib/store";
-import type { Conversation } from "@/lib/types";
+import type { Conversation, Webhook } from "@/lib/types";
 import { api, cn, slugify } from "@/lib/utils";
 import { Avatar, Button, Field, inputClass, Modal } from "./ui";
 
@@ -167,6 +167,8 @@ export function ChannelDialog({ conversation, onClose }: { conversation: Convers
         </form>
       )}
 
+      {conversation.canManage && <Webhooks conversation={conversation} />}
+
       {conversation.private && (
         <div className={cn(conversation.canManage && "mt-4 border-t border-line pt-4")}>
           <span className="text-[12px] font-medium text-ink-2">
@@ -221,5 +223,94 @@ export function ChannelDialog({ conversation, onClose }: { conversation: Convers
         <Button onClick={onClose}>Fermer</Button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * The incoming webhooks of a channel: another tool (Orbi's alerts…) posts here with a secret
+ * address. The address is shown once, right after it is created.
+ */
+function Webhooks({ conversation }: { conversation: Conversation }) {
+  const { reload } = useApp();
+  const [list, setList] = useState<Webhook[] | null>(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<{ name: string; url: string } | null>(null);
+  const url = `/api/conversations/${conversation.id}/webhooks`;
+
+  const load = useCallback(() => api<Webhook[]>(url).then(setList, (e) => toast.error((e as Error).message)), [url]);
+  useEffect(() => void load(), [load]);
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const hook = await api<Webhook & { url: string }>(url, { method: "POST", json: { name } });
+      setCreated({ name: hook.name, url: hook.url });
+      setName("");
+      await Promise.all([load(), reload()]);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+    setBusy(false);
+  };
+
+  const remove = async (hook: Webhook) => {
+    if (!window.confirm(`Supprimer le webhook ${hook.name} ? Son adresse cessera de fonctionner tout de suite.`)) return;
+    try {
+      await api(`/api/webhooks/${hook.id}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Adresse copiée");
+    } catch {
+      toast.error("Copie impossible : sélectionne l'adresse à la main");
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <span className="text-[12px] font-medium text-ink-2">Webhooks entrants</span>
+      <p className="mt-0.5 text-[12px] text-ink-3">Une autre application (les alertes d&apos;Orbi par exemple) écrit dans ce canal avec une adresse secrète.</p>
+      {list && list.length > 0 && (
+        <ul className="-mx-2 mt-1.5 flex flex-col gap-px px-2">
+          {list.map((h) => (
+            <li key={h.id} className="flex items-center gap-2.5 px-2 py-1.5">
+              <WebhookIcon className="size-4 shrink-0 text-ink-3" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-medium leading-tight">{h.name}</span>
+                <span className="block truncate text-[12px] leading-tight text-ink-3">{h.lastUsedAt ? `Dernier message le ${new Date(h.lastUsedAt).toLocaleString("fr-CH")}` : "Pas encore utilisé"}</span>
+              </span>
+              <Button size="sm" variant="ghost" onClick={() => remove(h)} aria-label={`Supprimer ${h.name}`}>
+                <Trash2 className="size-3.5" />
+                Supprimer
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {created && (
+        <div className="mt-2 rounded-lg border border-line-strong bg-surface-2 p-2.5">
+          <p className="text-[12px] text-ink-2">Adresse de {created.name}, à copier maintenant : elle ne sera plus affichée.</p>
+          <div className="mt-1.5 flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate text-[12px] select-all">{created.url}</code>
+            <Button size="sm" onClick={() => copy(created.url)} aria-label="Copier l'adresse">
+              <Copy className="size-3.5" />
+              Copier
+            </Button>
+          </div>
+        </div>
+      )}
+      <form onSubmit={add} className="mt-2 flex gap-2">
+        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="Nom, par exemple Orbi" className={inputClass} />
+        <Button disabled={busy || !name.trim()}>Ajouter</Button>
+      </form>
+    </div>
   );
 }
